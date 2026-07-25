@@ -43,6 +43,11 @@ function registerBackgroundWorkProvider(manager: ReturnType<typeof createBackgro
   });
 }
 
+function resolveWorkflowSessionId(sessionManager: unknown): string | undefined {
+  const manager = sessionManager as { getSessionFile?: () => string | undefined; getSessionId?: () => string | undefined } | undefined;
+  return manager?.getSessionFile?.() ?? manager?.getSessionId?.();
+}
+
 export default function extension(pi: ExtensionAPI) {
   const sendWorkflowMessage = (message: string, details: Record<string, unknown>) => {
     pi.sendMessage(
@@ -279,7 +284,7 @@ export default function extension(pi: ExtensionAPI) {
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       if (params.all === true || !params.id?.trim()) {
-        const sessionId = ctx.sessionManager?.getSessionId?.();
+        const sessionId = resolveWorkflowSessionId(ctx.sessionManager);
         await manager.waitForIdle(sessionId, params.timeoutMs);
         return { content: [{ type: "text", text: manager.formatStatus() }], details: { action: "wait", all: true, sessionId, status: "idle" } as any };
       }
@@ -458,7 +463,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("agent_end", async (_event, ctx) => {
     if (ctx.hasUI) return;
-    await manager.waitForIdle(ctx.sessionManager.getSessionId());
+    await manager.waitForIdle(resolveWorkflowSessionId(ctx.sessionManager));
   });
 
   pi.on("session_shutdown", () => {

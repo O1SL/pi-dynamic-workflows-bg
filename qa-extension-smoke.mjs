@@ -53,14 +53,14 @@ return { result }
 const tool = tools.get('workflow');
 const result = await tool.execute('call-1', { script }, undefined, undefined, {
   cwd: process.cwd(),
-  sessionManager: { getSessionId: () => 'session-qa' },
+  sessionManager: { getSessionFile: () => 'session-file-qa.jsonl', getSessionId: () => 'session-qa' },
   modelRegistry: undefined,
   model: undefined,
 });
 const text = result.content[0].text;
 if (!text.includes('Started background workflow extension_smoke')) throw new Error(`unexpected start result: ${text}`);
 const active = registry.providers.get('pi-dynamic-workflows-bg').listActiveWork();
-if (active.length !== 1 || active[0].sessionId !== 'session-qa') throw new Error(`bad active provider items: ${JSON.stringify(active)}`);
+if (active.length !== 1 || active[0].sessionId !== 'session-file-qa.jsonl') throw new Error(`bad active provider items: ${JSON.stringify(active)}`);
 
 // Cancel the real background run quickly; the completion path should still send a model-visible message.
 const runId = result.details.id;
@@ -99,8 +99,8 @@ const waitTool = tools.get('workflow_wait');
 const waitResult = await waitTool.execute('wait-1', { id: runId, timeoutMs: 1000 }, undefined, undefined, {});
 if (!waitResult.content[0].text.includes('extension_smoke')) throw new Error('workflow_wait did not return workflow result');
 if (waitResult.details?.action !== 'wait' || waitResult.details?.found !== true) throw new Error('workflow_wait details malformed');
-const waitAllResult = await waitTool.execute('wait-all', { all: true, timeoutMs: 1000 }, undefined, undefined, { sessionManager: { getSessionId: () => 'session-qa' } });
-if (waitAllResult.details?.all !== true || waitAllResult.details?.status !== 'idle') throw new Error('workflow_wait all:true details malformed');
+const waitAllResult = await waitTool.execute('wait-all', { all: true, timeoutMs: 1000 }, undefined, undefined, { sessionManager: { getSessionFile: () => 'session-file-qa.jsonl', getSessionId: () => 'session-qa' } });
+if (waitAllResult.details?.all !== true || waitAllResult.details?.status !== 'idle' || waitAllResult.details?.sessionId !== 'session-file-qa.jsonl') throw new Error('workflow_wait all:true details malformed');
 
 const cancelTool = tools.get('workflow_cancel');
 const cancelResult = await cancelTool.execute('cancel-1', { id: runId }, undefined, undefined, {});

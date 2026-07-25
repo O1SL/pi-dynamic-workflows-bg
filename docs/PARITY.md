@@ -9,7 +9,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Background default execution | Implemented | `workflow` starts in background unless `foreground:true` is passed. |
 | Foreground compatibility | Implemented | `foreground:true` preserves the original blocking workflow behavior. |
 | Model-visible completion | Implemented | Completion uses `pi.sendMessage(..., { triggerTurn: true })`, so the parent model can consume results. |
-| Native wait | Implemented | `workflow_wait` waits for one workflow and returns its result; `all:true` or omitted `id` waits until current-session workflows are idle. Use this instead of relying on `subagent_wait`. |
+| Native wait | Implemented | `workflow_wait` waits for one workflow and returns its result; `all:true` or omitted `id` waits until current-session workflows are idle. Session scoping uses the same `getSessionFile() ?? getSessionId()` identity as workflow start/provider registration. Use this instead of relying on `subagent_wait`. |
 | Native management tools | Implemented | `workflow_status`, `workflow_result`, `workflow_summary`, `workflow_transcript`, `workflow_events`, `workflow_worktrees`, `workflow_worktree_cleanup`, `workflow_prune`, `workflow_resume`, `workflow_cancel`, `workflow_wait`. Ambiguous id/prefix lookups report candidate run IDs instead of looking like missing runs; cancel/wait surfaces reuse the same diagnostics when no running target is cancelled/found. |
 | Human slash commands | Implemented | `/workflow-status`, `/workflow-result`, `/workflow-transcript`, `/workflow-resume`, `/workflow-cancel`. |
 | Artifacts | Implemented | Each run writes `status.json`, `events.jsonl`, `output.md`, `result.json`, and child sessions under `sessions/`. Key JSON/markdown artifacts are written via temp-file + atomic rename. |
@@ -34,7 +34,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Live steer running child | Implemented (experimental) | `workflow_steer` sends a steering message to a currently running child session when the live session handle is still available in the current process. |
 | Provider error propagation | Implemented | Child assistant messages ending with provider/tool errors now fail the workflow instead of returning empty text. |
 | CI | Implemented | GitHub Actions runs `npm ci`, `npm run qa:full`, and `npm pack --dry-run`. |
-| Local QA | Implemented | `qa:full` covers manager, extension, batching, recovery, lazy disk run lookup, ambiguous prefix diagnostics, artifact pruning and prune input validation, live-owner reconciliation, artifacts, transcript, wait, cancel, failure, token budget, etc. |
+| Local QA | Implemented | `qa:full` covers manager, extension, batching, recovery, lazy disk run lookup, ambiguous prefix diagnostics, artifact pruning and prune input validation, live-owner reconciliation, session identity consistency, artifacts, transcript, wait, cancel, failure, token budget, etc. |
 | Real Pi E2E | Partially implemented | Verified background completion, failure, foreground mode, `workflow_wait`, `workflow_transcript`, and `workflow_resume` on installed package. |
 
 ## Best-effort / partial

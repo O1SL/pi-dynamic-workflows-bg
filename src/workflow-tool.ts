@@ -56,6 +56,11 @@ export interface WorkflowToolOptions {
   backgroundManager?: BackgroundWorkflowManager;
 }
 
+function resolveWorkflowSessionId(sessionManager: unknown): string | undefined {
+  const manager = sessionManager as { getSessionFile?: () => string | undefined; getSessionId?: () => string | undefined } | undefined;
+  return manager?.getSessionFile?.() ?? manager?.getSessionId?.();
+}
+
 export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefinition<typeof workflowToolSchema, any> {
   return defineTool({
     name: "workflow",
@@ -100,9 +105,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           cwd: options.cwd ?? ctx.cwd,
           concurrency: params.concurrency ?? options.concurrency,
           tokenBudget: params.tokenBudget,
-          sessionId: ctx.sessionManager
-            ? (ctx.sessionManager.getSessionFile?.() ?? ctx.sessionManager.getSessionId?.())
-            : undefined,
+          sessionId: resolveWorkflowSessionId(ctx.sessionManager),
           session: {
             modelRegistry: ctx.modelRegistry,
             model: ctx.model,
