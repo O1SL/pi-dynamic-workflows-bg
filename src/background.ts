@@ -613,9 +613,9 @@ export function createBackgroundWorkflowManager(
   const pruneRuns = async (pruneOptions: { olderThanDays?: number; keepLast?: number; dryRun?: boolean } = {}) => {
     refreshRunsFromDisk();
     const dryRun = pruneOptions.dryRun !== false;
-    const keepLast = Math.max(0, Math.floor(pruneOptions.keepLast ?? 100));
-    const olderThanDays = pruneOptions.olderThanDays;
-    const cutoffMs = olderThanDays === undefined ? undefined : Date.now() - Math.max(0, olderThanDays) * 24 * 60 * 60 * 1000;
+    const keepLast = Math.floor(nonNegativeFiniteNumber(pruneOptions.keepLast ?? 100, "workflow prune keepLast"));
+    const olderThanDays = pruneOptions.olderThanDays === undefined ? undefined : nonNegativeFiniteNumber(pruneOptions.olderThanDays, "workflow prune olderThanDays");
+    const cutoffMs = olderThanDays === undefined ? undefined : Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
     const terminal = list()
       .filter((run) => run.status !== "running")
       .sort((a, b) => timestampOfRun(b) - timestampOfRun(a));
@@ -683,6 +683,13 @@ export function createBackgroundWorkflowManager(
 function timestampOfRun(run: BackgroundWorkflowRun): number {
   const value = Date.parse(run.completedAt ?? run.updatedAt ?? run.startedAt);
   return Number.isFinite(value) ? value : 0;
+}
+
+function nonNegativeFiniteNumber(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative finite number`);
+  }
+  return value;
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {

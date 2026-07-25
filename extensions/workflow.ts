@@ -199,7 +199,12 @@ export default function extension(pi: ExtensionAPI) {
       dryRun: Type.Optional(Type.Boolean({ description: "Preview only when true. Default true; pass false to delete candidate artifact directories." })),
     }),
     async execute(_id, params) {
-      const result = await manager.pruneRuns({ olderThanDays: params.olderThanDays, keepLast: params.keepLast, dryRun: params.dryRun });
+      let result: Awaited<ReturnType<typeof manager.pruneRuns>>;
+      try {
+        result = await manager.pruneRuns({ olderThanDays: params.olderThanDays, keepLast: params.keepLast, dryRun: params.dryRun });
+      } catch (error) {
+        return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { action: "prune", error: error instanceof Error ? error.message : String(error) } as any };
+      }
       const lines = [
         `Workflow prune ${result.dryRun ? "dry run" : "completed"}.`,
         `Candidates: ${result.candidates.length}`,
@@ -209,7 +214,7 @@ export default function extension(pi: ExtensionAPI) {
         ...(result.candidates.length > 50 ? [`... ${result.candidates.length - 50} more`] : []),
         ...(result.failed.length ? ["", "Failures:", ...result.failed.map((item) => `- ${item.id}: ${item.error}`)] : []),
       ];
-      return { content: [{ type: "text", text: lines.join("\n") }], details: { action: "prune", ...result } };
+      return { content: [{ type: "text", text: lines.join("\n") }], details: { action: "prune", ...result } as any };
     },
   }));
 
@@ -377,8 +382,12 @@ export default function extension(pi: ExtensionAPI) {
       const keepIndex = tokens.indexOf("--keep-last");
       const olderThanDays = olderIndex >= 0 ? Number(tokens[olderIndex + 1]) : undefined;
       const keepLast = keepIndex >= 0 ? Number(tokens[keepIndex + 1]) : undefined;
-      const result = await manager.pruneRuns({ olderThanDays, keepLast, dryRun });
-      ctx.ui.notify(`Workflow prune ${result.dryRun ? "dry run" : "completed"}: ${result.candidates.length} candidate(s), ${result.removed.length} removed, ${result.failed.length} failed.`, result.failed.length ? "warning" : "info");
+      try {
+        const result = await manager.pruneRuns({ olderThanDays, keepLast, dryRun });
+        ctx.ui.notify(`Workflow prune ${result.dryRun ? "dry run" : "completed"}: ${result.candidates.length} candidate(s), ${result.removed.length} removed, ${result.failed.length} failed.`, result.failed.length ? "warning" : "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
     },
   });
 

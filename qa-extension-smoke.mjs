@@ -107,6 +107,8 @@ if (!cancelResult.isError || !cancelResult.content[0].text.includes(runId)) thro
 const pruneTool = tools.get('workflow_prune');
 const pruneResult = await pruneTool.execute('prune-1', { keepLast: 1000 }, undefined, undefined, {});
 if (!pruneResult.content[0].text.includes('Workflow prune dry run') || pruneResult.details?.dryRun !== true) throw new Error('workflow_prune dry-run response mismatch');
+const badPruneResult = await pruneTool.execute('prune-bad', { keepLast: Number.NaN }, undefined, undefined, {});
+if (!badPruneResult.isError || !badPruneResult.content[0].text.includes('keepLast')) throw new Error('workflow_prune invalid input response mismatch');
 if (cancelResult.details?.status !== 'not_running_or_not_found') throw new Error('workflow_cancel terminal-run details mismatch');
 
 console.log(JSON.stringify({ ok: true, runId, sent: { customType: sent.message.customType, triggerTurn: sent.options.triggerTurn }, wait: waitResult.details }, null, 2));

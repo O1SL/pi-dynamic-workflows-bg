@@ -471,6 +471,10 @@ assert(existsSync(join(tmp, prunePreview.candidates[0], 'status.json')), 'dry-ru
 const pruneDelete = await lazyManager.pruneRuns({ keepLast: 1, dryRun: false });
 assert(pruneDelete.dryRun === false && pruneDelete.removed.length === pruneDelete.candidates.length, `unexpected prune delete: ${JSON.stringify(pruneDelete)}`);
 for (const id of pruneDelete.removed) assert(!existsSync(join(tmp, id)), `pruned artifact directory still exists: ${id}`);
+await lazyManager.pruneRuns({ keepLast: Number.NaN })
+  .then(() => { throw new Error('invalid prune keepLast should fail'); }, (error) => {
+    assert(String(error).includes('keepLast'), `invalid prune keepLast error mismatch: ${error}`);
+  });
 
 console.log(JSON.stringify({
   ok: true,
