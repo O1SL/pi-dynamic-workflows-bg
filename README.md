@@ -67,7 +67,7 @@ workflow_worktrees                # list isolated worktrees
 workflow_worktree_cleanup         # clean workflow-created worktrees
 workflow_prune                    # dry-run/delete old terminal workflow artifacts
 workflow_cancel                   # cancel a running workflow
-workflow_wait                     # wait for one run and return its result
+workflow_wait                     # wait for one run, or all current-session workflows with all:true
 ```
 
 Artifacts are written to:

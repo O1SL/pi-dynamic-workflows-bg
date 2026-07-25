@@ -99,6 +99,8 @@ const waitTool = tools.get('workflow_wait');
 const waitResult = await waitTool.execute('wait-1', { id: runId, timeoutMs: 1000 }, undefined, undefined, {});
 if (!waitResult.content[0].text.includes('extension_smoke')) throw new Error('workflow_wait did not return workflow result');
 if (waitResult.details?.action !== 'wait' || waitResult.details?.found !== true) throw new Error('workflow_wait details malformed');
+const waitAllResult = await waitTool.execute('wait-all', { all: true, timeoutMs: 1000 }, undefined, undefined, { sessionManager: { getSessionId: () => 'session-qa' } });
+if (waitAllResult.details?.all !== true || waitAllResult.details?.status !== 'idle') throw new Error('workflow_wait all:true details malformed');
 
 const cancelTool = tools.get('workflow_cancel');
 const cancelResult = await cancelTool.execute('cancel-1', { id: runId }, undefined, undefined, {});

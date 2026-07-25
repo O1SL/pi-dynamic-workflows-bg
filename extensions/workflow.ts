@@ -271,12 +271,18 @@ export default function extension(pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "workflow_wait",
     label: "Workflow Wait",
-    description: "Wait for a background workflow by id/prefix, then return its result. Use when the current turn must consume a workflow result.",
+    description: "Wait for a background workflow by id/prefix, or pass all:true / omit id to wait until current-session workflows are idle. Use when the current turn must consume workflow results.",
     parameters: Type.Object({
-      id: Type.String({ description: "Run id or prefix." }),
+      id: Type.Optional(Type.String({ description: "Run id or prefix. Omit with all:true to wait for current-session workflows to become idle." })),
+      all: Type.Optional(Type.Boolean({ description: "Wait for all active workflows in this Pi session instead of one id. Also used when id is omitted." })),
       timeoutMs: Type.Optional(Type.Number({ description: "Timeout in milliseconds. Default 30 minutes." })),
     }),
-    async execute(_id, params) {
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      if (params.all === true || !params.id?.trim()) {
+        const sessionId = ctx.sessionManager?.getSessionId?.();
+        await manager.waitForIdle(sessionId, params.timeoutMs);
+        return { content: [{ type: "text", text: manager.formatStatus() }], details: { action: "wait", all: true, sessionId, status: "idle" } as any };
+      }
       const run = await manager.waitForRun(params.id, params.timeoutMs);
       if (!run) {
         const text = manager.formatStatus(params.id);
