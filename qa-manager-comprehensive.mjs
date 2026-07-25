@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, mkdir, writeFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBackgroundWorkflowManager } from './dist/src/index.js';
+import { writeFileAtomic } from './dist/src/background.js';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -475,6 +476,14 @@ await lazyManager.pruneRuns({ keepLast: Number.NaN })
   .then(() => { throw new Error('invalid prune keepLast should fail'); }, (error) => {
     assert(String(error).includes('keepLast'), `invalid prune keepLast error mismatch: ${error}`);
   });
+
+// 21. Atomic artifact writes clean up temporary files if final rename fails.
+const atomicDir = join(tmp, 'atomic-write-case');
+await mkdir(atomicDir, { recursive: true });
+await writeFileAtomic(atomicDir, 'cannot replace directory')
+  .then(() => { throw new Error('atomic write to a directory should fail'); }, () => undefined);
+const atomicEntries = await readdir(tmp);
+assert(!atomicEntries.some((entry) => entry.includes('atomic-write-case.') && entry.endsWith('.tmp')), `atomic write left temporary files: ${atomicEntries.join(',')}`);
 
 console.log(JSON.stringify({
   ok: true,

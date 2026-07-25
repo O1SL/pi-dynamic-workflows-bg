@@ -98,10 +98,15 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function writeFileAtomic(path: string, content: string): Promise<void> {
+export async function writeFileAtomic(path: string, content: string): Promise<void> {
   const tmp = `${path}.${process.pid}.${Date.now()}.${atomicWriteCounter++}.tmp`;
-  await writeFile(tmp, content, "utf8");
-  await rename(tmp, path);
+  try {
+    await writeFile(tmp, content, "utf8");
+    await rename(tmp, path);
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 const DEFAULT_MAX_NOTIFICATION_CHARS = 24_000;
