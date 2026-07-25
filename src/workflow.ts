@@ -46,6 +46,7 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
   model?: string;
   isolation?: "worktree";
   agentType?: string;
+  timeoutMs?: number;
 }
 
 interface RuntimeState {
@@ -112,10 +113,11 @@ export async function runWorkflow<T = unknown>(
       options.onAgentStart?.({ label, phase: assignedPhase, prompt: taskPrompt });
       try {
         throwIfAborted();
+        const childSignal = createChildSignal(options.signal, normalizedOptions.timeoutMs);
         const result = await agentRunner.run(taskPrompt, {
           label,
           schema: normalizedOptions.schema,
-          signal: options.signal,
+          signal: childSignal,
           instructions: buildAgentInstructions(assignedPhase, normalizedOptions),
           onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
         } as any);
@@ -425,7 +427,27 @@ function normalizeAgentOptions(value: unknown): AgentOptions {
     model: optionalString(options.model, "agent model"),
     isolation: options.isolation,
     agentType: optionalString(options.agentType, "agent type"),
+    timeoutMs: optionalPositiveNumber(options.timeoutMs, "agent timeoutMs"),
   };
+}
+
+function optionalPositiveNumber(value: unknown, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new TypeError(`${name} must be a positive number`);
+  return value;
+}
+
+function createChildSignal(parent: AbortSignal | undefined, timeoutMs: number | undefined): AbortSignal | undefined {
+  if (!parent && timeoutMs === undefined) return undefined;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (parent?.aborted) controller.abort();
+  else parent?.addEventListener("abort", abort, { once: true });
+  if (timeoutMs !== undefined) {
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer.unref?.();
+  }
+  return controller.signal;
 }
 
 function assertStructuredCloneable(value: unknown, name: string): void {
@@ -449,6 +471,7 @@ function buildAgentInstructions(phase: string | undefined, options: AgentOptions
   if (options.agentType) lines.push(`Act as workflow subagent type: ${options.agentType}`);
   if (options.isolation) lines.push(`Requested isolation: ${options.isolation}`);
   if (options.model) lines.push(`Requested model: ${options.model}`);
+  if (options.timeoutMs) lines.push(`Requested timeoutMs: ${options.timeoutMs}`);
   return lines.length ? lines.join("\n") : undefined;
 }
 

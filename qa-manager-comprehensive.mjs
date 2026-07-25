@@ -184,7 +184,35 @@ await manager.waitForRun(budgetRun.id, 2000);
 assert(budgetRun.status === 'failed', `budget run status ${budgetRun.status}`);
 assert(String(budgetRun.error).includes('token budget exhausted'), `budget error mismatch: ${budgetRun.error}`);
 
-// 9. Restore historical runs and convert stale running records to interrupted.
+// 9. Per-child timeout aborts a slow agent and returns null for that branch.
+const timeoutScript = `export const meta = { name: 'timeout_case', description: 'timeout case' }
+const result = await agent('slow', { label: 'slow child', timeoutMs: 50 })
+return { result }
+`;
+let timeoutAbortObserved = false;
+const timeoutRun = await manager.start({
+  script: timeoutScript,
+  sessionId: 'session-timeout',
+  agent: {
+    async run(_prompt, opts) {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 5000);
+        opts.signal?.addEventListener('abort', () => {
+          timeoutAbortObserved = true;
+          clearTimeout(timer);
+          reject(new Error('timeout abort observed'));
+        }, { once: true });
+      });
+      return 'should-not-finish';
+    },
+  },
+});
+await manager.waitForRun(timeoutRun.id, 2000);
+assert(timeoutAbortObserved, 'per-child timeout did not abort slow agent');
+assert(timeoutRun.status === 'completed', `timeout workflow status ${timeoutRun.status}`);
+assert(timeoutRun.result?.result?.result === null, 'timed-out child branch should return null');
+
+// 10. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');
