@@ -118,6 +118,7 @@ export async function runWorkflow<T = unknown>(
           label,
           schema: normalizedOptions.schema,
           signal: childSignal,
+          model: normalizedOptions.model,
           instructions: buildAgentInstructions(assignedPhase, normalizedOptions),
           onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
         } as any);

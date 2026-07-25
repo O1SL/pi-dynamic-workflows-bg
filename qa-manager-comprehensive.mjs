@@ -212,7 +212,21 @@ assert(timeoutAbortObserved, 'per-child timeout did not abort slow agent');
 assert(timeoutRun.status === 'completed', `timeout workflow status ${timeoutRun.status}`);
 assert(timeoutRun.result?.result?.result === null, 'timed-out child branch should return null');
 
-// 10. Restore historical runs and convert stale running records to interrupted.
+// 10. agent({ model }) is passed through to the child runner.
+let observedModel;
+const modelScript = `export const meta = { name: 'model_option_case', description: 'model option case' }
+const result = await agent('model-check', { label: 'model child', model: 'provider/model-id' })
+return { result }
+`;
+const modelRun = await manager.start({
+  script: modelScript,
+  sessionId: 'session-model',
+  agent: { async run(_prompt, opts) { observedModel = opts.model; return 'model-ok'; } },
+});
+await manager.waitForRun(modelRun.id, 2000);
+assert(observedModel === 'provider/model-id', `agent model option was not passed through: ${observedModel}`);
+
+// 11. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');

@@ -1,4 +1,4 @@
-import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, TextContent } from "@earendil-works/pi-ai";
 import {
   type CreateAgentSessionOptions,
   createAgentSession,
@@ -30,6 +30,7 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   instructions?: string;
   signal?: AbortSignal;
   onSession?: (info: { sessionFile?: string; label?: string }) => void;
+  model?: string;
 }
 
 export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef extends TSchema
@@ -66,6 +67,7 @@ export class WorkflowAgent {
     const sessionManager = this.sessionDir
       ? SessionManager.create(this.cwd, this.sessionDir)
       : SessionManager.inMemory(this.cwd);
+    const model = this.resolveModel(options.model);
     const { session } = await createAgentSession({
       cwd: this.cwd,
       agentDir,
@@ -73,6 +75,7 @@ export class WorkflowAgent {
       settingsManager: SettingsManager.create(this.cwd, agentDir),
       customTools,
       ...this.sessionOptions,
+      ...(model ? { model } : {}),
     });
 
     options.onSession?.({ sessionFile: sessionManager.getSessionFile(), label: options.label });
@@ -108,6 +111,7 @@ export class WorkflowAgent {
     const customTools: ToolDefinition[] = [...this.baseTools, ...(options.tools ?? [])];
     const agentDir = getAgentDir();
     const sessionManager = SessionManager.open(sessionFile, undefined, this.cwd);
+    const model = this.resolveModel(options.model);
     const { session } = await createAgentSession({
       cwd: this.cwd,
       agentDir,
@@ -115,6 +119,7 @@ export class WorkflowAgent {
       settingsManager: SettingsManager.create(this.cwd, agentDir),
       customTools,
       ...this.sessionOptions,
+      ...(model ? { model } : {}),
     });
     let removeAbortListener: (() => void) | undefined;
     try {
@@ -132,6 +137,25 @@ export class WorkflowAgent {
       removeAbortListener?.();
       session.dispose();
     }
+  }
+
+  private resolveModel(spec: string | undefined): Model<Api> | undefined {
+    if (!spec) return undefined;
+    const registry = this.sessionOptions.modelRegistry;
+    if (!registry) throw new Error(`Cannot resolve workflow child model '${spec}': no modelRegistry available`);
+    const [provider, ...rest] = spec.includes("/") ? spec.split("/") : [];
+    if (provider && rest.length > 0) {
+      const id = rest.join("/");
+      const found = registry.find(provider, id);
+      if (!found) throw new Error(`Workflow child model not found: ${spec}`);
+      return found;
+    }
+    const matches = registry.getAvailable().filter((model) => model.id === spec || `${model.provider}/${model.id}` === spec);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) throw new Error(`Workflow child model '${spec}' is ambiguous; use provider/model id`);
+    const allMatches = registry.getAll().filter((model) => model.id === spec || `${model.provider}/${model.id}` === spec);
+    if (allMatches.length === 1) return allMatches[0];
+    throw new Error(`Workflow child model not found: ${spec}`);
   }
 
   private buildPrompt(prompt: string, options: AgentRunOptions<any>, structured: boolean): string {
