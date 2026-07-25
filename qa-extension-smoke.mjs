@@ -79,4 +79,21 @@ if (!String(sent.message.content).includes('Background workflow')) throw new Err
 const activeAfter = registry.providers.get('pi-dynamic-workflows-bg').listActiveWork();
 if (activeAfter.length !== 0) throw new Error(`provider should have no active items after completion: ${JSON.stringify(activeAfter)}`);
 
-console.log(JSON.stringify({ ok: true, runId, sent: { customType: sent.message.customType, triggerTurn: sent.options.triggerTurn } }, null, 2));
+const statusTool = tools.get('workflow_status');
+const statusResult = await statusTool.execute('status-1', { id: runId }, undefined, undefined, {});
+if (!statusResult.content[0].text.includes(runId)) throw new Error('workflow_status did not include run id');
+
+const resultTool = tools.get('workflow_result');
+const resultResult = await resultTool.execute('result-1', { id: runId }, undefined, undefined, {});
+if (!resultResult.content[0].text.includes('extension_smoke')) throw new Error('workflow_result did not include workflow name');
+
+const waitTool = tools.get('workflow_wait');
+const waitResult = await waitTool.execute('wait-1', { id: runId, timeoutMs: 1000 }, undefined, undefined, {});
+if (!waitResult.content[0].text.includes('extension_smoke')) throw new Error('workflow_wait did not return workflow result');
+if (waitResult.details?.action !== 'wait' || waitResult.details?.found !== true) throw new Error('workflow_wait details malformed');
+
+const cancelTool = tools.get('workflow_cancel');
+const cancelResult = await cancelTool.execute('cancel-1', { id: runId }, undefined, undefined, {});
+if (!cancelResult.content[0].text.includes('No running workflow')) throw new Error('workflow_cancel terminal-run response mismatch');
+
+console.log(JSON.stringify({ ok: true, runId, sent: { customType: sent.message.customType, triggerTurn: sent.options.triggerTurn }, wait: waitResult.details }, null, 2));
