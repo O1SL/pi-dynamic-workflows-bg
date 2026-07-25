@@ -97,6 +97,8 @@ const parallelGroup = graph?.nodes.find((node) => node.kind === 'parallel');
 assert(parallelGroup?.status === 'done', 'workflow graph missing completed parallel group');
 assert(graph.nodes.some((node) => node.parentId === parallelGroup.id && node.label === 'second graph'), 'workflow graph missing parallel child parentId');
 assert(graph.edges.some((edge) => edge.from === 'a1' && edge.to === parallelGroup.id && edge.kind === 'seq'), 'workflow graph missing seq edge into parallel group');
+const graphParallelStatus = JSON.parse(await readFile(graphParallel.statusPath, 'utf8'));
+assert(graphParallelStatus.snapshot.graph.nodes.some((node) => node.parentId === parallelGroup.id && node.label === 'second graph'), 'serialized graph missing parallel parentId');
 
 const graphPipelineScript = `export const meta = { name: 'graph_pipeline_case', description: 'graph pipeline case' }
 phase('Pipe')
@@ -115,6 +117,28 @@ await manager.waitForRun(graphPipeline.id, 2000);
 const pipelineGroup = graphPipeline.snapshot.graph?.nodes.find((node) => node.kind === 'pipeline');
 assert(pipelineGroup?.status === 'done', 'workflow graph missing completed pipeline group');
 assert(graphPipeline.snapshot.graph.nodes.some((node) => node.parentId === pipelineGroup.id && node.pipelineCell?.stageIndex === 1 && node.pipelineCell?.itemLabel === 'one'), 'workflow graph missing pipeline cell metadata');
+const graphPipelineStatus = JSON.parse(await readFile(graphPipeline.statusPath, 'utf8'));
+assert(graphPipelineStatus.snapshot.graph.nodes.some((node) => node.parentId === pipelineGroup.id && node.pipelineCell?.stageIndex === 1 && node.pipelineCell?.itemLabel === 'one'), 'serialized graph missing pipelineCell metadata');
+
+const nestedGraphScript = `export const meta = { name: 'nested_graph_case', description: 'nested graph case' }
+phase('Nested')
+await parallel([
+  () => pipeline(['nested'], (value) => agent('inner ' + value, { label: 'inner duplicate' })),
+  () => agent('outer', { label: 'inner duplicate' }),
+])
+return { ok: true }
+`;
+const nestedGraphRun = await manager.start({
+  script: nestedGraphScript,
+  sessionId: 'session-nested-graph',
+  agent: { async run(prompt, opts) { return `${opts.label}:${prompt}`; } },
+});
+await manager.waitForRun(nestedGraphRun.id, 2000);
+const nestedParallel = nestedGraphRun.snapshot.graph?.nodes.find((node) => node.kind === 'parallel');
+const nestedPipeline = nestedGraphRun.snapshot.graph?.nodes.find((node) => node.kind === 'pipeline');
+assert(nestedParallel && nestedPipeline?.parentId === nestedParallel.id, 'nested graph group parentId missing');
+assert(nestedGraphRun.snapshot.graph.nodes.filter((node) => node.kind === 'agent' && node.label === 'inner duplicate').length === 2, 'duplicate-label graph agents missing');
+assert(nestedGraphRun.snapshot.agents.every((agent) => agent.agentRunId), 'agentRunId missing from duplicate-label run');
 
 // 2. Script failure path preserves artifacts and notifies model-visible layer.
 const failScript = `export const meta = { name: 'failure_case', description: 'failure case' }
@@ -142,6 +166,29 @@ const noAgent = await manager.start({ script: noAgentScript, sessionId: 'session
 await manager.waitForIdle('session-c', 2000);
 assert(noAgent.status === 'failed', `no-agent status ${noAgent.status}`);
 assert(String(noAgent.error).includes('must call agent() at least once'), `no-agent error mismatch: ${noAgent.error}`);
+
+const nondeterminismAliasScript = `export const meta = { name: 'nondeterminism_alias_case', description: 'nondeterminism alias case' }
+const random = Math.random
+await agent(String(random()), { label: 'should-not-run' })
+return { ok: true }
+`;
+const nondeterminismAlias = await manager.start({ script: nondeterminismAliasScript, sessionId: 'session-nondeterminism-alias', agent: { async run() { return 'should-not-run'; } } });
+await manager.waitForRun(nondeterminismAlias.id, 2000);
+assert(nondeterminismAlias.status === 'failed' && String(nondeterminismAlias.error).includes('random'), `nondeterminism alias not blocked: ${nondeterminismAlias.error}`);
+const nondeterminismGlobalScript = `export const meta = { name: 'nondeterminism_global_case', description: 'nondeterminism global case' }
+await agent(String(globalThis.Date.now()), { label: 'should-not-run' })
+return { ok: true }
+`;
+const nondeterminismGlobal = await manager.start({ script: nondeterminismGlobalScript, sessionId: 'session-nondeterminism-global', agent: { async run() { return 'should-not-run'; } } });
+await manager.waitForRun(nondeterminismGlobal.id, 2000);
+assert(nondeterminismGlobal.status === 'failed' && /Date|undefined|now/.test(String(nondeterminismGlobal.error)), `global Date not blocked: ${nondeterminismGlobal.error}`);
+const codegenScript = `export const meta = { name: 'codegen_case', description: 'codegen case' }
+await agent(String(this.constructor.constructor('return 1')()), { label: 'should-not-run' })
+return { ok: true }
+`;
+const codegenRun = await manager.start({ script: codegenScript, sessionId: 'session-codegen', agent: { async run() { return 'should-not-run'; } } });
+await manager.waitForRun(codegenRun.id, 2000);
+assert(codegenRun.status === 'failed' && /code generation|Code generation|not allowed|constructor/i.test(String(codegenRun.error)), `dynamic code generation not blocked: ${codegenRun.error}`);
 
 // 4. Cancellation propagates to running agents and artifacts.
 const cancelScript = `export const meta = { name: 'cancel_case', description: 'cancel case' }
@@ -174,6 +221,30 @@ assert(cancelRun.status === 'cancelled', `cancel status ${cancelRun.status}`);
 assert(abortObserved, 'agent did not observe abort');
 const cancelOutput = await readFile(cancelRun.outputPath, 'utf8');
 assert(cancelOutput.includes('Background workflow cancelled: cancel_case'), 'cancel output heading missing');
+
+const cancelGraphScript = `export const meta = { name: 'cancel_graph_case', description: 'cancel graph case' }
+phase('Cancel Graph')
+await parallel([
+  () => agent('long a', { label: 'long a' }),
+  () => agent('long b', { label: 'long b' }),
+])
+return { ok: true }
+`;
+const cancelGraphRun = await manager.start({
+  script: cancelGraphScript,
+  sessionId: 'session-cancel-graph',
+  agent: {
+    async run(_prompt, opts) {
+      await new Promise((resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => reject(new Error('cancel graph aborted')), { once: true });
+      });
+    },
+  },
+});
+await waitUntil(() => cancelGraphRun.snapshot.graph?.nodes.some((node) => node.kind === 'parallel' && node.status === 'running'), 'cancel graph group running');
+assert(manager.cancel(cancelGraphRun.id), 'cancel graph returned false');
+await manager.waitForRun(cancelGraphRun.id, 2000);
+assert(cancelGraphRun.snapshot.graph?.nodes.every((node) => node.status !== 'running'), 'cancelled graph left running nodes');
 
 // 5. Concurrent runs get distinct ids and can be waited as a session group.
 const concurrentScript = `export const meta = { name: 'concurrent_case', description: 'concurrent case' }

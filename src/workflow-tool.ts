@@ -173,7 +173,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           },
           onGraphGroupStart(event) {
             recordPhase(event.phase);
-            upsertWorkflowGraphNode(snapshot, { id: event.id, kind: event.kind, label: event.label, phase: event.phase, status: "running" });
+            upsertWorkflowGraphNode(snapshot, { id: event.id, kind: event.kind, label: event.label, phase: event.phase, parentId: event.parentId, pipelineCell: event.pipelineCell, status: "running" });
             update();
           },
           onGraphGroupEnd(event) {
@@ -187,6 +187,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
             const startedAtMs = Date.now();
             snapshot.agents.push({
               id,
+              agentRunId: event.agentRunId,
               label: event.label,
               phase: event.phase,
               prompt: event.prompt,
@@ -196,7 +197,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
               startedAtMs,
             });
             upsertWorkflowGraphNode(snapshot, {
-              id: `a${id}`,
+              id: event.agentRunId,
               kind: "agent",
               label: event.label,
               phase: event.phase,
@@ -210,7 +211,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           onAgentToolBudget(event) {
             const agent = [...snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.toolBudget = {
                 count: event.count,
@@ -219,50 +220,50 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
                 ...(event.type === "soft" ? { softReached: true } : agent.toolBudget?.softReached ? { softReached: true } : {}),
                 ...(event.type === "hard" ? { hardExceeded: true, tool: event.tool } : agent.toolBudget?.hardExceeded ? { hardExceeded: true, tool: agent.toolBudget.tool } : {}),
               };
-              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { usage: { ...(snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), toolCount: event.count } });
+              updateWorkflowGraphNode(snapshot, agent.agentRunId!, { usage: { ...(snapshot.graph?.nodes.find((node) => node.id === agent.agentRunId)?.usage ?? {}), toolCount: event.count } });
             }
             update();
           },
           onAgentAttempt(event) {
             const agent = [...snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.attempts ??= [];
               agent.attempts.push({ model: event.model, attempt: event.attempt, status: event.status, ...(event.error ? { error: event.error } : {}) });
-              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { attempts: agent.attempts, usage: { ...(snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), model: event.model } });
+              updateWorkflowGraphNode(snapshot, agent.agentRunId!, { attempts: agent.attempts, usage: { ...(snapshot.graph?.nodes.find((node) => node.id === agent.agentRunId)?.usage ?? {}), model: event.model } });
             }
             update();
           },
           onAgentSession(event) {
             const agent = [...snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent && event.sessionFile) {
               agent.sessionFile = event.sessionFile;
-              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { sessionFile: event.sessionFile, artifactPath: event.sessionFile });
+              updateWorkflowGraphNode(snapshot, agent.agentRunId!, { sessionFile: event.sessionFile, artifactPath: event.sessionFile });
             }
             update();
           },
           onAgentWorktree(event) {
             const agent = [...snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.worktreePath = event.worktreePath;
-              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { worktreePath: event.worktreePath });
+              updateWorkflowGraphNode(snapshot, agent.agentRunId!, { worktreePath: event.worktreePath });
             }
             update();
           },
           onAgentEnd(event) {
             const agent = [...snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.status = event.result === null ? "error" : "done";
               agent.resultPreview = preview(event.result);
               agent.durationMs = agent.startedAtMs ? Date.now() - agent.startedAtMs : undefined;
-              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { status: agentStatusToGraphStatus(agent.status), usage: { ...(snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), durationMs: agent.durationMs } });
+              updateWorkflowGraphNode(snapshot, agent.agentRunId!, { status: agentStatusToGraphStatus(agent.status), usage: { ...(snapshot.graph?.nodes.find((node) => node.id === agent.agentRunId)?.usage ?? {}), durationMs: agent.durationMs } });
             }
             update();
           },
@@ -273,8 +274,11 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
             if (agent.status === "running") {
               agent.status = "skipped";
               agent.error = "aborted";
-              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { status: "skipped" });
+              updateWorkflowGraphNode(snapshot, agent.agentRunId!, { status: "skipped" });
             }
+          }
+          for (const node of snapshot.graph?.nodes ?? []) {
+            if (node.status === "running") node.status = "skipped";
           }
           snapshot = recomputeWorkflowSnapshot(snapshot);
           display.complete(snapshot);

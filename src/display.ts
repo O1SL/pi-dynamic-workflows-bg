@@ -43,6 +43,7 @@ export interface WorkflowGraph {
 
 export interface WorkflowAgentSnapshot {
   id: number;
+  agentRunId?: string;
   label: string;
   phase?: string;
   prompt: string;

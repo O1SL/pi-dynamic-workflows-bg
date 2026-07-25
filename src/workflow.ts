@@ -33,16 +33,16 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   signal?: AbortSignal;
   onLog?: (message: string) => void;
   onPhase?: (title: string) => void;
-  onAgentStart?: (event: { label: string; phase?: string; prompt: string; parentId?: string; pipelineCell?: { itemIndex: number; stageIndex: number; itemLabel?: string } }) => void;
-  onAgentEnd?: (event: { label: string; phase?: string; result: unknown }) => void;
-  onAgentSession?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
-  onAgentWorktree?: (event: { label: string; phase?: string; worktreePath: string }) => void;
-  onAgentAttempt?: (event: { label: string; phase?: string; model?: string; attempt: number; status: "failed" | "succeeded"; error?: string }) => void;
-  onAgentToolBudget?: (event: { label: string; phase?: string } & ToolBudgetEvent) => void;
-  onAgentLiveSession?: (event: { label: string; phase?: string; session: any; sessionFile?: string }) => void;
-  onAgentLiveSessionEnd?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
-  onGraphGroupStart?: (event: { id: string; label: string; kind: "parallel" | "pipeline"; phase?: string }) => void;
-  onGraphGroupEnd?: (event: { id: string; status: "done" | "error" }) => void;
+  onAgentStart?: (event: { agentRunId: string; label: string; phase?: string; prompt: string; parentId?: string; pipelineCell?: { itemIndex: number; stageIndex: number; itemLabel?: string } }) => void;
+  onAgentEnd?: (event: { agentRunId: string; label: string; phase?: string; result: unknown }) => void;
+  onAgentSession?: (event: { agentRunId: string; label: string; phase?: string; sessionFile?: string }) => void;
+  onAgentWorktree?: (event: { agentRunId: string; label: string; phase?: string; worktreePath: string }) => void;
+  onAgentAttempt?: (event: { agentRunId: string; label: string; phase?: string; model?: string; attempt: number; status: "failed" | "succeeded"; error?: string }) => void;
+  onAgentToolBudget?: (event: { agentRunId: string; label: string; phase?: string } & ToolBudgetEvent) => void;
+  onAgentLiveSession?: (event: { agentRunId: string; label: string; phase?: string; session: any; sessionFile?: string }) => void;
+  onAgentLiveSessionEnd?: (event: { agentRunId: string; label: string; phase?: string; sessionFile?: string }) => void;
+  onGraphGroupStart?: (event: { id: string; label: string; kind: "parallel" | "pipeline"; phase?: string; parentId?: string; pipelineCell?: { itemIndex: number; stageIndex: number; itemLabel?: string } }) => void;
+  onGraphGroupEnd?: (event: { id: string; status: "done" | "error" | "skipped" }) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -74,6 +74,7 @@ interface RuntimeState {
   logs: string[];
   phases: string[];
   agentCount: number;
+  agentRunCount: number;
   graphGroupCount: number;
   spent: number;
 }
@@ -94,7 +95,7 @@ export async function runWorkflow<T = unknown>(
 ): Promise<WorkflowRunResult<T>> {
   const started = Date.now();
   const { meta, body } = parseWorkflowScript(script);
-  const state: RuntimeState = { logs: [], phases: [], agentCount: 0, graphGroupCount: 0, spent: 0 };
+  const state: RuntimeState = { logs: [], phases: [], agentCount: 0, agentRunCount: 0, graphGroupCount: 0, spent: 0 };
   const agentRunner = options.agent ?? new WorkflowAgent(options);
   const concurrency = Math.max(
     1,
@@ -136,16 +137,18 @@ export async function runWorkflow<T = unknown>(
     const requestedLabel = normalizedOptions.label?.trim();
     const run = limiter(async () => {
       state.agentCount++;
+      state.agentRunCount++;
+      const agentRunId = `a${state.agentRunCount}`;
       const label = requestedLabel || defaultAgentLabel(assignedPhase, state.agentCount);
       const context = graphContext.getStore();
-      options.onAgentStart?.({ label, phase: assignedPhase, prompt: taskPrompt, parentId: context?.parentId, pipelineCell: context?.pipelineCell });
+      options.onAgentStart?.({ agentRunId, label, phase: assignedPhase, prompt: taskPrompt, parentId: context?.parentId, pipelineCell: context?.pipelineCell });
       try {
         throwIfAborted();
         const childSignal = createChildSignal(options.signal, normalizedOptions.timeoutMs);
         const worktreePath = normalizedOptions.isolation === "worktree"
           ? await createWorkflowWorktree(options.cwd ?? process.cwd(), label)
           : undefined;
-        if (worktreePath) options.onAgentWorktree?.({ label, phase: assignedPhase, worktreePath });
+        if (worktreePath) options.onAgentWorktree?.({ agentRunId, label, phase: assignedPhase, worktreePath });
         const effectiveAgentRunner = worktreePath && !options.agent
           ? new WorkflowAgent({ ...options, cwd: worktreePath, sessionDir: options.sessionDir ? join(options.sessionDir, "worktrees", sanitizePathSegment(label)) : undefined })
           : agentRunner;
@@ -166,23 +169,23 @@ export async function runWorkflow<T = unknown>(
               model,
               toolBudget: normalizedOptions.toolBudget,
               turnBudget: normalizedOptions.turnBudget,
-              onToolBudgetEvent: (event: ToolBudgetEvent) => options.onAgentToolBudget?.({ label, phase: assignedPhase, ...event }),
-              onLiveSession: (info: { session: any; sessionFile?: string }) => options.onAgentLiveSession?.({ label, phase: assignedPhase, session: info.session, sessionFile: info.sessionFile }),
-              onLiveSessionEnd: (info: { sessionFile?: string }) => options.onAgentLiveSessionEnd?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
+              onToolBudgetEvent: (event: ToolBudgetEvent) => options.onAgentToolBudget?.({ agentRunId, label, phase: assignedPhase, ...event }),
+              onLiveSession: (info: { session: any; sessionFile?: string }) => options.onAgentLiveSession?.({ agentRunId, label, phase: assignedPhase, session: info.session, sessionFile: info.sessionFile }),
+              onLiveSessionEnd: (info: { sessionFile?: string }) => options.onAgentLiveSessionEnd?.({ agentRunId, label, phase: assignedPhase, sessionFile: info.sessionFile }),
               instructions: buildAgentInstructions(assignedPhase, { ...normalizedOptions, model }),
-              onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
+              onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ agentRunId, label, phase: assignedPhase, sessionFile: info.sessionFile }),
               } as any);
               lastError = undefined;
-              options.onAgentAttempt?.({ label, phase: assignedPhase, model, attempt: globalAttempt, status: "succeeded" });
+              options.onAgentAttempt?.({ agentRunId, label, phase: assignedPhase, model, attempt: globalAttempt, status: "succeeded" });
               if (modelIndex > 0) log(`agent ${label} succeeded with fallback model ${model}`);
               if (retryAttempt > 0) log(`agent ${label} succeeded after retry ${retryAttempt} with model ${model ?? "default"}`);
               throwIfAborted();
               state.spent += estimateTokens(result);
-              options.onAgentEnd?.({ label, phase: assignedPhase, result });
+              options.onAgentEnd?.({ agentRunId, label, phase: assignedPhase, result });
               return result;
             } catch (error) {
               lastError = error;
-              options.onAgentAttempt?.({ label, phase: assignedPhase, model, attempt: globalAttempt, status: "failed", error: error instanceof Error ? error.message : String(error) });
+              options.onAgentAttempt?.({ agentRunId, label, phase: assignedPhase, model, attempt: globalAttempt, status: "failed", error: error instanceof Error ? error.message : String(error) });
               if (options.signal?.aborted || childSignal?.aborted) throw error;
               if (!isRetryableModelError(error)) throw error;
               if (retryAttempt < retry) {
@@ -201,7 +204,7 @@ export async function runWorkflow<T = unknown>(
       } catch (error) {
         if (options.signal?.aborted) throw error;
         log(`agent ${label} failed: ${error instanceof Error ? error.message : String(error)}`);
-        options.onAgentEnd?.({ label, phase: assignedPhase, result: null });
+        options.onAgentEnd?.({ agentRunId, label, phase: assignedPhase, result: null });
         return null;
       }
     });
@@ -221,22 +224,25 @@ export async function runWorkflow<T = unknown>(
     }
     const id = nextGraphGroupId(state);
     const phaseForGroup = state.currentPhase;
-    options.onGraphGroupStart?.({ id, label: `parallel ×${thunks.length}`, kind: "parallel", phase: phaseForGroup });
+    const parentContext = graphContext.getStore();
+    options.onGraphGroupStart?.({ id, label: `parallel ×${thunks.length}`, kind: "parallel", phase: phaseForGroup, parentId: parentContext?.parentId, pipelineCell: parentContext?.pipelineCell });
     let hadError = false;
-    const result = await Promise.all(
-      thunks.map(async (thunk, index) => {
-        try {
-          return await graphContext.run({ parentId: id }, thunk);
-        } catch (error) {
-          if (options.signal?.aborted) throw error;
-          hadError = true;
-          log(`parallel[${index}] failed: ${error instanceof Error ? error.message : String(error)}`);
-          return null;
-        }
-      }),
-    );
-    options.onGraphGroupEnd?.({ id, status: hadError ? "error" : "done" });
-    return result;
+    try {
+      return await Promise.all(
+        thunks.map(async (thunk, index) => {
+          try {
+            return await graphContext.run({ parentId: id }, thunk);
+          } catch (error) {
+            if (options.signal?.aborted) throw error;
+            hadError = true;
+            log(`parallel[${index}] failed: ${error instanceof Error ? error.message : String(error)}`);
+            return null;
+          }
+        }),
+      );
+    } finally {
+      options.onGraphGroupEnd?.({ id, status: options.signal?.aborted ? "skipped" : hadError ? "error" : "done" });
+    }
   };
 
   const pipeline = async (
@@ -250,29 +256,32 @@ export async function runWorkflow<T = unknown>(
     }
     const id = nextGraphGroupId(state);
     const phaseForGroup = state.currentPhase;
-    options.onGraphGroupStart?.({ id, label: `pipeline ${items.length}×${stages.length}`, kind: "pipeline", phase: phaseForGroup });
+    const parentContext = graphContext.getStore();
+    options.onGraphGroupStart?.({ id, label: `pipeline ${items.length}×${stages.length}`, kind: "pipeline", phase: phaseForGroup, parentId: parentContext?.parentId, pipelineCell: parentContext?.pipelineCell });
     let hadError = false;
-    const result = await Promise.all(
-      items.map(async (item, index) => {
-        let value: unknown = item;
-        for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
-          const stage = stages[stageIndex]!;
-          try {
-            throwIfAborted();
-            value = await graphContext.run({ parentId: id, pipelineCell: { itemIndex: index, stageIndex, itemLabel: graphItemLabel(item, index) } }, () => stage(value, item, index));
-            throwIfAborted();
-          } catch (error) {
-            if (options.signal?.aborted) throw error;
-            hadError = true;
-            log(`pipeline[${index}] failed: ${error instanceof Error ? error.message : String(error)}`);
-            return null;
+    try {
+      return await Promise.all(
+        items.map(async (item, index) => {
+          let value: unknown = item;
+          for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
+            const stage = stages[stageIndex]!;
+            try {
+              throwIfAborted();
+              value = await graphContext.run({ parentId: id, pipelineCell: { itemIndex: index, stageIndex, itemLabel: graphItemLabel(item, index) } }, () => stage(value, item, index));
+              throwIfAborted();
+            } catch (error) {
+              if (options.signal?.aborted) throw error;
+              hadError = true;
+              log(`pipeline[${index}] failed: ${error instanceof Error ? error.message : String(error)}`);
+              return null;
+            }
           }
-        }
-        return value;
-      }),
-    );
-    options.onGraphGroupEnd?.({ id, status: hadError ? "error" : "done" });
-    return result;
+          return value;
+        }),
+      );
+    } finally {
+      options.onGraphGroupEnd?.({ id, status: options.signal?.aborted ? "skipped" : hadError ? "error" : "done" });
+    }
   };
 
   const context = vm.createContext({
@@ -292,7 +301,14 @@ export async function runWorkflow<T = unknown>(
       error: (m: unknown) => log(`[error] ${String(m)}`),
     },
     JSON,
-    Math,
+    Math: safeMath(),
+    Date: undefined,
+    Function: undefined,
+    eval: undefined,
+    globalThis: undefined,
+    setTimeout: undefined,
+    setInterval: undefined,
+    setImmediate: undefined,
     Array,
     Object,
     String,
@@ -301,9 +317,9 @@ export async function runWorkflow<T = unknown>(
     Set,
     Map,
     Promise,
-  });
+  }, { codeGeneration: { strings: false, wasm: false } });
 
-  const wrapped = `(async () => {\n${body}\n})()`;
+  const wrapped = `(async function () {\n"use strict";\n${body}\n})()`;
   const result = await new vm.Script(wrapped, { filename: `${meta.name || "workflow"}.js` }).runInContext(context);
   await Promise.allSettled([...pendingAgentRuns]);
   assertStructuredCloneable(result, "workflow result");
@@ -475,6 +491,15 @@ function validateMeta(meta: unknown): asserts meta is WorkflowMeta {
       }
     }
   }
+}
+
+function safeMath(): Math {
+  const clone = Object.create(null) as Math;
+  for (const key of Object.getOwnPropertyNames(Math) as Array<keyof Math>) {
+    if (key === "random") continue;
+    Object.defineProperty(clone, key, Object.getOwnPropertyDescriptor(Math, key)!);
+  }
+  return Object.freeze(clone);
 }
 
 function nextGraphGroupId(state: RuntimeState): string {

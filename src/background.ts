@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { appendFile, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,7 +9,6 @@ import { WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
 import {
   agentStatusToGraphStatus,
   createWorkflowSnapshot,
-  ensureWorkflowGraph,
   preview,
   recomputeWorkflowSnapshot,
   renderWorkflowText,
@@ -151,11 +150,6 @@ export function createBackgroundWorkflowManager(
     const resolveSettled = settledResolvers.get(run.id);
     settledResolvers.delete(run.id);
     resolveSettled?.();
-  };
-
-  const appendEvent = async (run: BackgroundWorkflowRun, event: Omit<WorkflowEvent, "ts">) => {
-    await mkdir(run.artifactDir, { recursive: true });
-    await appendFile(run.eventsPath, eventLine(event), "utf8");
   };
 
   const appendEventSync = (run: BackgroundWorkflowRun, event: Omit<WorkflowEvent, "ts">) => {
@@ -385,7 +379,7 @@ export function createBackgroundWorkflowManager(
           onGraphGroupStart(event) {
             if (!run.snapshot.phases.includes(event.phase ?? "") && event.phase) run.snapshot.phases.push(event.phase);
             appendEventSync(run, { type: "workflow.graph.group_started", id: event.id, label: event.label, kind: event.kind, phase: event.phase });
-            upsertWorkflowGraphNode(run.snapshot, { id: event.id, kind: event.kind, label: event.label, phase: event.phase, status: "running" });
+            upsertWorkflowGraphNode(run.snapshot, { id: event.id, kind: event.kind, label: event.label, phase: event.phase, parentId: event.parentId, pipelineCell: event.pipelineCell, status: "running" });
             update(run);
           },
           onGraphGroupEnd(event) {
@@ -400,6 +394,7 @@ export function createBackgroundWorkflowManager(
             const startedAtMs = Date.now();
             run.snapshot.agents.push({
               id: agentId,
+              agentRunId: event.agentRunId,
               label: event.label,
               phase: event.phase,
               prompt: event.prompt,
@@ -409,7 +404,7 @@ export function createBackgroundWorkflowManager(
               startedAtMs,
             });
             upsertWorkflowGraphNode(run.snapshot, {
-              id: `a${agentId}`,
+              id: event.agentRunId,
               kind: "agent",
               label: event.label,
               phase: event.phase,
@@ -421,17 +416,17 @@ export function createBackgroundWorkflowManager(
             update(run);
           },
           onAgentLiveSession(event) {
-            liveSessions.set(liveKey(run.id, event.label), { runId: run.id, label: event.label, sessionFile: event.sessionFile, session: event.session });
+            liveSessions.set(liveKey(run.id, event.agentRunId), { runId: run.id, label: event.label, sessionFile: event.sessionFile, session: event.session });
             appendEventSync(run, { type: "workflow.agent.live", label: event.label, phase: event.phase, sessionFile: event.sessionFile });
           },
           onAgentLiveSessionEnd(event) {
-            liveSessions.delete(liveKey(run.id, event.label));
+            liveSessions.delete(liveKey(run.id, event.agentRunId));
             appendEventSync(run, { type: "workflow.agent.live_end", label: event.label, phase: event.phase, sessionFile: event.sessionFile });
           },
           onAgentToolBudget(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.toolBudget = {
                 count: event.count,
@@ -440,7 +435,7 @@ export function createBackgroundWorkflowManager(
                 ...(event.type === "soft" ? { softReached: true } : agent.toolBudget?.softReached ? { softReached: true } : {}),
                 ...(event.type === "hard" ? { hardExceeded: true, tool: event.tool } : agent.toolBudget?.hardExceeded ? { hardExceeded: true, tool: agent.toolBudget.tool } : {}),
               };
-              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), toolCount: event.count } });
+              updateWorkflowGraphNode(run.snapshot, agent.agentRunId!, { usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === agent.agentRunId)?.usage ?? {}), toolCount: event.count } });
             }
             appendEventSync(run, { type: "workflow.agent.tool_budget", label: event.label, phase: event.phase, budgetEvent: event.type, tool: event.tool, count: event.count, hard: event.hard, soft: event.soft });
             update(run);
@@ -448,11 +443,11 @@ export function createBackgroundWorkflowManager(
           onAgentAttempt(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.attempts ??= [];
               agent.attempts.push({ model: event.model, attempt: event.attempt, status: event.status, ...(event.error ? { error: event.error } : {}) });
-              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { attempts: agent.attempts, usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), model: event.model } });
+              updateWorkflowGraphNode(run.snapshot, agent.agentRunId!, { attempts: agent.attempts, usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === agent.agentRunId)?.usage ?? {}), model: event.model } });
             }
             appendEventSync(run, { type: "workflow.agent.attempt", label: event.label, phase: event.phase, model: event.model, attempt: event.attempt, status: event.status, error: event.error });
             update(run);
@@ -460,10 +455,10 @@ export function createBackgroundWorkflowManager(
           onAgentWorktree(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.worktreePath = event.worktreePath;
-              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { worktreePath: event.worktreePath });
+              updateWorkflowGraphNode(run.snapshot, agent.agentRunId!, { worktreePath: event.worktreePath });
             }
             appendEventSync(run, { type: "workflow.agent.worktree", label: event.label, phase: event.phase, worktreePath: event.worktreePath });
             update(run);
@@ -471,10 +466,10 @@ export function createBackgroundWorkflowManager(
           onAgentSession(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent && event.sessionFile) {
               agent.sessionFile = event.sessionFile;
-              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { sessionFile: event.sessionFile, artifactPath: event.sessionFile });
+              updateWorkflowGraphNode(run.snapshot, agent.agentRunId!, { sessionFile: event.sessionFile, artifactPath: event.sessionFile });
             }
             appendEventSync(run, { type: "workflow.agent.session", label: event.label, phase: event.phase, sessionFile: event.sessionFile });
             update(run);
@@ -482,12 +477,12 @@ export function createBackgroundWorkflowManager(
           onAgentEnd(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
-              .find((item) => item.label === event.label && item.status === "running");
+              .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.status = event.result === null ? "error" : "done";
               agent.resultPreview = preview(event.result);
               agent.durationMs = agent.startedAtMs ? Date.now() - agent.startedAtMs : undefined;
-              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { status: agentStatusToGraphStatus(agent.status), usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), durationMs: agent.durationMs } });
+              updateWorkflowGraphNode(run.snapshot, agent.agentRunId!, { status: agentStatusToGraphStatus(agent.status), usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === agent.agentRunId)?.usage ?? {}), durationMs: agent.durationMs } });
             }
             appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result), sessionFile: agent?.sessionFile, worktreePath: agent?.worktreePath });
             update(run);
@@ -511,8 +506,11 @@ export function createBackgroundWorkflowManager(
           if (agent.status === "running") {
             agent.status = run.status === "cancelled" ? "skipped" : "error";
             agent.error = run.error;
-            updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { status: agentStatusToGraphStatus(agent.status) });
+            updateWorkflowGraphNode(run.snapshot, agent.agentRunId!, { status: agentStatusToGraphStatus(agent.status) });
           }
+        }
+        for (const node of run.snapshot.graph?.nodes ?? []) {
+          if (node.status === "running") node.status = run.status === "cancelled" ? "skipped" : "error";
         }
       } finally {
         run.completedAt = new Date().toISOString();
@@ -613,7 +611,7 @@ export function createBackgroundWorkflowManager(
     if (!run) throw new Error(lookupError(idOrPrefix));
     const agent = selectTranscriptAgent(run, selector) ?? run.snapshot.agents[0];
     if (!agent) throw new Error(`No child agent matched selector: ${selector ?? "(first)"}`);
-    const live = liveSessions.get(liveKey(run.id, agent.label));
+    const live = liveSessions.get(liveKey(run.id, agent.agentRunId ?? agent.label));
     if (!live) throw new Error(`Child agent is not currently live/running: ${agent.label}`);
     if (typeof live.session.steer === "function") await live.session.steer(prompt);
     else if (typeof live.session.sendUserMessage === "function") await live.session.sendUserMessage(prompt, { deliverAs: "steer" });
