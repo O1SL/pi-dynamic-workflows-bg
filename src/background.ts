@@ -77,6 +77,7 @@ export interface BackgroundWorkflowManager {
   formatStatus(idOrPrefix?: string): string;
   formatResult(idOrPrefix: string): string;
   formatTranscript(idOrPrefix: string, selector?: string | number, lines?: number): string;
+  formatEvents(idOrPrefix: string, lines?: number): string;
 }
 
 function defaultRunsRoot(): string {
@@ -496,7 +497,13 @@ export function createBackgroundWorkflowManager(
     return formatRunTranscript(run, selector, lines);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, listWorktrees, cleanupWorktrees, formatStatus, formatResult, formatTranscript };
+  const formatEvents = (idOrPrefix: string, lines?: number) => {
+    const run = get(idOrPrefix.trim());
+    if (!run) return `No background workflow found for: ${idOrPrefix}`;
+    return formatRunEvents(run, lines);
+  };
+
+  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, listWorktrees, cleanupWorktrees, formatStatus, formatResult, formatTranscript, formatEvents };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {
@@ -539,6 +546,34 @@ function selectTranscriptAgent(run: BackgroundWorkflowRun, selector?: string | n
     }
   }
   return agent;
+}
+
+export function formatRunEvents(run: BackgroundWorkflowRun, lines = 120): string {
+  if (!existsSync(run.eventsPath)) return `Workflow ${run.id} has no events file: ${run.eventsPath}`;
+  const parsed = readFileSync(run.eventsPath, "utf8")
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => {
+      try { return JSON.parse(line); } catch { return { type: "malformed", raw: line }; }
+    });
+  const limit = Math.max(1, Math.min(lines, 1000));
+  const tail = parsed.slice(-limit);
+  return [
+    `Workflow events: ${run.id}`,
+    `Events file: ${run.eventsPath}`,
+    `Showing ${tail.length}/${parsed.length} event${parsed.length === 1 ? "" : "s"}`,
+    "",
+    ...tail.map(formatWorkflowEventLine),
+  ].join("\n");
+}
+
+function formatWorkflowEventLine(event: any): string {
+  const ts = event.ts ? `${event.ts} ` : "";
+  const type = event.type ?? "unknown";
+  const rest = { ...event };
+  delete rest.ts;
+  delete rest.type;
+  return `${ts}${type} ${JSON.stringify(rest)}`.trim();
 }
 
 export function formatRunTranscript(run: BackgroundWorkflowRun, selector?: string | number, lines = 80): string {

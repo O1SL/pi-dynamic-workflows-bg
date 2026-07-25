@@ -32,10 +32,10 @@ const pi = {
 
 extension(pi);
 
-for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_transcript', 'workflow_worktrees', 'workflow_worktree_cleanup', 'workflow_resume', 'workflow_cancel', 'workflow_wait']) {
+for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_transcript', 'workflow_events', 'workflow_worktrees', 'workflow_worktree_cleanup', 'workflow_resume', 'workflow_cancel', 'workflow_wait']) {
   if (!tools.has(name)) throw new Error(`${name} tool was not registered`);
 }
-for (const name of ['workflow-status', 'workflow-result', 'workflow-transcript', 'workflow-worktrees', 'workflow-worktree-cleanup', 'workflow-resume', 'workflow-cancel']) {
+for (const name of ['workflow-status', 'workflow-result', 'workflow-transcript', 'workflow-events', 'workflow-worktrees', 'workflow-worktree-cleanup', 'workflow-resume', 'workflow-cancel']) {
   if (!commands.has(name)) throw new Error(`${name} command was not registered`);
 }
 if (!renderers.has('background-workflow-result')) throw new Error('message renderer was not registered');
@@ -86,6 +86,10 @@ if (!statusResult.content[0].text.includes(runId)) throw new Error('workflow_sta
 const resultTool = tools.get('workflow_result');
 const resultResult = await resultTool.execute('result-1', { id: runId }, undefined, undefined, {});
 if (!resultResult.content[0].text.includes('extension_smoke')) throw new Error('workflow_result did not include workflow name');
+
+const eventsTool = tools.get('workflow_events');
+const eventsResult = await eventsTool.execute('events-1', { id: runId, lines: 20 }, undefined, undefined, {});
+if (!eventsResult.content[0].text.includes('workflow.started')) throw new Error('workflow_events did not include lifecycle events');
 
 const waitTool = tools.get('workflow_wait');
 const waitResult = await waitTool.execute('wait-1', { id: runId, timeoutMs: 1000 }, undefined, undefined, {});

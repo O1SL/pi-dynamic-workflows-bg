@@ -57,6 +57,8 @@ const successEvents = await readFile(success.eventsPath, 'utf8');
 if (!successEvents.includes('workflow.started') || !successEvents.includes('workflow.completed') || !successEvents.includes('workflow.agent.started')) {
   throw new Error(`events artifact missing lifecycle events: ${successEvents}`);
 }
+const formattedEvents = manager.formatEvents(success.id, 10);
+assert(formattedEvents.includes('workflow.started') && formattedEvents.includes('workflow.completed'), 'formatEvents missing lifecycle entries');
 const fakeSessionFile = join(success.artifactDir, 'fake-child-session.jsonl');
 await writeFile(fakeSessionFile, [
   JSON.stringify({ type: 'session', id: 'fake', version: 3, timestamp: new Date().toISOString(), cwd: process.cwd() }),

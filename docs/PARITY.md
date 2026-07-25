@@ -15,7 +15,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Artifacts | Implemented | Each run writes `status.json`, `events.jsonl`, `output.md`, `result.json`, and child sessions under `sessions/`. |
 | Durable run registry/recovery | Implemented (basic) | On extension load, historical `status.json` files are restored. Stale `running` runs from old processes become `interrupted`. |
 | Reconciliation | Implemented (basic) | `ownerPid` prevents current-process runs from being falsely marked interrupted; old running records are reconciled to interrupted. |
-| Events log | Implemented | `events.jsonl` records workflow lifecycle, phases, agent start/end/session/resume, completion/failure/cancel/interrupted. |
+| Events log | Implemented | `events.jsonl` records workflow lifecycle, phases, agent start/end/session/resume, completion/failure/cancel/interrupted. `workflow_events` and `/workflow-events` inspect it. |
 | Notification size limit | Implemented | Large model-visible notifications are truncated while full output remains in artifacts. |
 | Completion batching | Implemented | Completed workflows are batched over a short debounce window. Failures/cancellations flush immediately. |
 | Completion dedupe | Implemented | `notifiedIds` and persisted `notified` prevent duplicate notifications in the current/recovered process. |
