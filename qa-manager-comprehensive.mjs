@@ -248,6 +248,11 @@ await manager.waitForRun(fallbackRun.id, 2000);
 assert(fallbackRun.status === 'completed', `fallback run status ${fallbackRun.status}`);
 assert(attemptedModels.join(',') === 'primary/model,fallback/model', `fallback attempts mismatch: ${attemptedModels.join(',')}`);
 assert(fallbackRun.result?.result?.result === 'fallback-ok:fallback/model', 'fallback result mismatch');
+const fallbackAttempts = fallbackRun.snapshot.agents[0]?.attempts ?? [];
+assert(fallbackAttempts.length === 2, `expected 2 fallback attempts, got ${fallbackAttempts.length}`);
+assert(fallbackAttempts[0].status === 'failed' && fallbackAttempts[1].status === 'succeeded', 'fallback attempt ledger statuses mismatch');
+const fallbackEvents = await readFile(fallbackRun.eventsPath, 'utf8');
+assert(fallbackEvents.includes('workflow.agent.attempt') && fallbackEvents.includes('fallback/model'), 'fallback attempt events missing');
 
 // 12. Non-retryable failures do not use fallbackModels.
 const nonRetryScript = `export const meta = { name: 'no_fallback_case', description: 'no fallback case' }

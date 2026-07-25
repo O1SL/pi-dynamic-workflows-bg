@@ -305,6 +305,17 @@ export function createBackgroundWorkflowManager(
             });
             update(run);
           },
+          onAgentAttempt(event) {
+            const agent = [...run.snapshot.agents]
+              .reverse()
+              .find((item) => item.label === event.label && item.status === "running");
+            if (agent) {
+              agent.attempts ??= [];
+              agent.attempts.push({ model: event.model, status: event.status, ...(event.error ? { error: event.error } : {}) });
+            }
+            appendEventSync(run, { type: "workflow.agent.attempt", label: event.label, phase: event.phase, model: event.model, status: event.status, error: event.error });
+            update(run);
+          },
           onAgentWorktree(event) {
             const agent = [...run.snapshot.agents]
               .reverse()

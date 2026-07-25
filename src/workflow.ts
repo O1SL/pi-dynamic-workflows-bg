@@ -35,6 +35,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onAgentEnd?: (event: { label: string; phase?: string; result: unknown }) => void;
   onAgentSession?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
   onAgentWorktree?: (event: { label: string; phase?: string; worktreePath: string }) => void;
+  onAgentAttempt?: (event: { label: string; phase?: string; model?: string; status: "failed" | "succeeded"; error?: string }) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -143,6 +144,7 @@ export async function runWorkflow<T = unknown>(
               onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
             } as any);
             lastError = undefined;
+            options.onAgentAttempt?.({ label, phase: assignedPhase, model, status: "succeeded" });
             if (attempt > 0) log(`agent ${label} succeeded with fallback model ${model}`);
             throwIfAborted();
             state.spent += estimateTokens(result);
@@ -150,6 +152,7 @@ export async function runWorkflow<T = unknown>(
             return result;
           } catch (error) {
             lastError = error;
+            options.onAgentAttempt?.({ label, phase: assignedPhase, model, status: "failed", error: error instanceof Error ? error.message : String(error) });
             if (options.signal?.aborted || childSignal?.aborted) throw error;
             const hasFallback = attempt + 1 < modelsToTry.length;
             if (!hasFallback || !isRetryableModelError(error)) throw error;

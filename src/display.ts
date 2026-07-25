@@ -13,6 +13,7 @@ export interface WorkflowAgentSnapshot {
   error?: string;
   sessionFile?: string;
   worktreePath?: string;
+  attempts?: Array<{ model?: string; status: "failed" | "succeeded"; error?: string }>;
 }
 
 export interface WorkflowSnapshot {
