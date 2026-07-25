@@ -3,7 +3,7 @@
  *
  * Add this to a JavaScript or TypeScript workflow file for editor IntelliSense:
  *
- *   /// <reference types="pi-dynamic-workflows/workflow" />
+ *   /// <reference types="pi-dynamic-workflows-bg/workflow" />
  */
 
 export {};
@@ -25,18 +25,46 @@ declare global {
   }
 
   interface WorkflowAgentOptions<TSchema = JsonSchema> {
-    /** Short label shown in the live progress UI. */
+    /** Short label shown in progress/status/artifacts. */
     label?: string;
     /** Override the current runtime phase for this agent. */
     phase?: string;
     /** JSON Schema for structured output. When present, the returned value is typed as unknown unless you provide a generic. */
     schema?: TSchema;
-    /** Requested model name. Currently passed as subagent guidance. */
+    /** Requested child model, e.g. `provider/model-id`. */
     model?: string;
-    /** Requested isolation mode. */
+    /** Fallback models to try after retryable provider/model failures for the primary model. */
+    fallbackModels?: string[];
+    /** Same-model retries for retryable provider/model failures. Default: 1. */
+    retry?: number;
+    /** Delay between same-model retries in milliseconds. Default: 1000. */
+    retryDelayMs?: number;
+    /** Abort this child after the given milliseconds. */
+    timeoutMs?: number;
+    /** Requested isolation mode. `worktree` creates a detached git worktree for this child. */
     isolation?: "worktree";
-    /** Requested subagent role/type. */
+    /** Requested subagent role/type. Currently passed as child instructions. */
     agentType?: string;
+    /** Per-child tool-call budget. */
+    toolBudget?: WorkflowAgentToolBudget;
+    /** Per-child assistant turn budget. */
+    turnBudget?: WorkflowAgentTurnBudget;
+  }
+
+  interface WorkflowAgentToolBudget {
+    /** Soft threshold that appends a model-visible warning once reached. */
+    soft?: number;
+    /** Hard threshold after which configured tools are blocked. */
+    hard: number;
+    /** Tools to block after hard threshold. Defaults to `*`. */
+    block?: "*" | string[];
+  }
+
+  interface WorkflowAgentTurnBudget {
+    /** Maximum assistant turns expected from the child. */
+    maxTurns: number;
+    /** Additional assistant turns tolerated before post-run enforcement fails the child. */
+    graceTurns?: number;
   }
 
   type JsonPrimitive = string | number | boolean | null;
