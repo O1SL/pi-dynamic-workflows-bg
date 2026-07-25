@@ -95,7 +95,9 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           args: params.args,
           cwd: options.cwd ?? ctx.cwd,
           concurrency: options.concurrency,
-          sessionId: ctx.sessionManager?.getSessionId?.(),
+          sessionId: ctx.sessionManager
+            ? (ctx.sessionManager.getSessionFile?.() ?? ctx.sessionManager.getSessionId?.())
+            : undefined,
           session: {
             modelRegistry: ctx.modelRegistry,
             model: ctx.model,

@@ -94,7 +94,7 @@ export function createBackgroundWorkflowManager(
   const start = async (startOptions: BackgroundWorkflowStartOptions): Promise<BackgroundWorkflowRun> => {
     const script = startOptions.script.trim();
     const parsed = parseWorkflowScript(script);
-    const id = makeRunId(parsed.meta);
+    const id = makeRunId(parsed.meta, runsRoot, runs);
     const artifactDir = resolve(runsRoot, id);
     let resolveSettled!: () => void;
     const settled = new Promise<void>((resolve) => {
@@ -278,11 +278,11 @@ export function formatRunResult(run: BackgroundWorkflowRun): string {
   return lines.join("\n");
 }
 
-function makeRunId(meta: WorkflowMeta): string {
+function makeRunId(meta: WorkflowMeta, runsRoot: string, existingRuns?: Map<string, BackgroundWorkflowRun>): string {
   const name = meta.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "workflow";
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   let id = `${stamp}-${name}`;
   let suffix = 2;
-  while (existsSync(resolve(defaultRunsRoot(), id))) id = `${stamp}-${name}-${suffix++}`;
+  while (existingRuns?.has(id) || existsSync(resolve(runsRoot, id))) id = `${stamp}-${name}-${suffix++}`;
   return id;
 }
