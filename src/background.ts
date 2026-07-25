@@ -267,6 +267,7 @@ export function createBackgroundWorkflowManager(
       try {
         const result = await runWorkflow(script, {
           cwd: run.cwd,
+          sessionDir: join(run.artifactDir, "sessions"),
           args: startOptions.args,
           concurrency: startOptions.concurrency,
           tokenBudget: startOptions.tokenBudget,
@@ -296,6 +297,14 @@ export function createBackgroundWorkflowManager(
             });
             update(run);
           },
+          onAgentSession(event) {
+            const agent = [...run.snapshot.agents]
+              .reverse()
+              .find((item) => item.label === event.label && item.status === "running");
+            if (agent && event.sessionFile) agent.sessionFile = event.sessionFile;
+            appendEventSync(run, { type: "workflow.agent.session", label: event.label, phase: event.phase, sessionFile: event.sessionFile });
+            update(run);
+          },
           onAgentEnd(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
@@ -304,7 +313,7 @@ export function createBackgroundWorkflowManager(
               agent.status = event.result === null ? "error" : "done";
               agent.resultPreview = preview(event.result);
             }
-            appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result) });
+            appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result), sessionFile: agent?.sessionFile });
             update(run);
           },
         });

@@ -11,6 +11,7 @@ export interface WorkflowAgentSnapshot {
   status: WorkflowAgentStatus;
   resultPreview?: string;
   error?: string;
+  sessionFile?: string;
 }
 
 export interface WorkflowSnapshot {

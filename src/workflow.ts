@@ -27,6 +27,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onPhase?: (title: string) => void;
   onAgentStart?: (event: { label: string; phase?: string; prompt: string }) => void;
   onAgentEnd?: (event: { label: string; phase?: string; result: unknown }) => void;
+  onAgentSession?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -116,6 +117,7 @@ export async function runWorkflow<T = unknown>(
           schema: normalizedOptions.schema,
           signal: options.signal,
           instructions: buildAgentInstructions(assignedPhase, normalizedOptions),
+          onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
         } as any);
         throwIfAborted();
         state.spent += estimateTokens(result);

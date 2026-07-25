@@ -13,6 +13,8 @@ import { createStructuredOutputTool, type StructuredOutputCapture } from "./stru
 
 export interface WorkflowAgentOptions {
   cwd?: string;
+  /** Persist child sessions under this directory. Defaults to in-memory child sessions. */
+  sessionDir?: string;
   /** Extra tools available to the subagent in addition to the structured output tool. */
   tools?: ToolDefinition[];
   /** Override any createAgentSession option (model, authStorage, resourceLoader, etc.). */
@@ -27,6 +29,7 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   tools?: ToolDefinition[];
   instructions?: string;
   signal?: AbortSignal;
+  onSession?: (info: { sessionFile?: string; label?: string }) => void;
 }
 
 export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef extends TSchema
@@ -36,12 +39,14 @@ export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef 
 export class WorkflowAgent {
   private readonly cwd: string;
   private readonly baseTools: ToolDefinition[];
+  private readonly sessionDir?: string;
   private readonly sessionOptions: Partial<CreateAgentSessionOptions>;
   private readonly instructions?: string;
 
   constructor(options: WorkflowAgentOptions = {}) {
     this.cwd = options.cwd ?? process.cwd();
     this.baseTools = options.tools ?? createCodingTools(this.cwd);
+    this.sessionDir = options.sessionDir;
     this.sessionOptions = options.session ?? {};
     this.instructions = options.instructions;
   }
@@ -58,14 +63,19 @@ export class WorkflowAgent {
     }
 
     const agentDir = getAgentDir();
+    const sessionManager = this.sessionDir
+      ? SessionManager.create(this.cwd, this.sessionDir)
+      : SessionManager.inMemory(this.cwd);
     const { session } = await createAgentSession({
       cwd: this.cwd,
       agentDir,
-      sessionManager: SessionManager.inMemory(this.cwd),
+      sessionManager,
       settingsManager: SettingsManager.create(this.cwd, agentDir),
       customTools,
       ...this.sessionOptions,
     });
+
+    options.onSession?.({ sessionFile: sessionManager.getSessionFile(), label: options.label });
 
     let removeAbortListener: (() => void) | undefined;
     try {
