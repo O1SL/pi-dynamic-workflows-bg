@@ -128,6 +128,30 @@ return { inventory, summary }
 
 Available globals are the same as the upstream plugin: `agent`, `parallel`, `pipeline`, `phase`, `log`, `args`, `cwd`, `process.cwd()`, and `budget`.
 
+For editor IntelliSense in standalone workflow files, add:
+
+```js
+/// <reference types="pi-dynamic-workflows-bg/workflow" />
+```
+
+Useful `agent()` options in this fork include:
+
+```js
+const review = await agent('Review this module.', {
+  label: 'reviewer',
+  model: 'provider/model-id',
+  fallbackModels: ['provider/fallback-model'],
+  retry: 2,
+  retryDelayMs: 1000,
+  timeoutMs: 120000,
+  toolBudget: { soft: 20, hard: 30, block: '*' },
+  turnBudget: { maxTurns: 4, graceTurns: 1 },
+  isolation: 'worktree',
+})
+```
+
+`model`, `fallbackModels`, retry, timeout, tool-budget, turn-budget, and worktree options are real runtime options in this fork; see `types/workflow.d.ts` for the ambient type surface.
+
 ## Notes
 
 See [`docs/PARITY.md`](docs/PARITY.md) for the detailed parity matrix versus `pi-subagents`, including implemented and partial capabilities. See [`docs/UNSUPPORTED.md`](docs/UNSUPPORTED.md) for deliberate non-goals and deeper limitations.
@@ -152,7 +176,7 @@ npm run qa:smoke
 1. `qa-smoke.mjs` — mock-agent background execution, notification callback, and artifact checks.
 2. `qa-extension-smoke.mjs` — extension registration, model-visible `sendMessage(... triggerTurn:true)` completion, and same-realm `pi-subagents.background-work.v1` provider checks.
 
-`qa:full` additionally runs `qa-manager-comprehensive.mjs`, covering success, failure, no-agent validation, cancellation, concurrent id collision prevention, provider-active visibility, session-scoped wait, and artifact outputs.
+`qa:full` additionally runs `qa-tool-budget.mjs` and `qa-manager-comprehensive.mjs`, covering success, failure, no-agent validation, cancellation, concurrent id collision prevention, provider-active visibility, session-scoped wait, retry/fallback, budgets, worktrees, lazy restore, prune, trusted artifact paths, atomic writes, and artifact outputs.
 
 ## License
 
