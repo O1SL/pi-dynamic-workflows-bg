@@ -188,59 +188,76 @@ export function createBackgroundWorkflowManager(
     void persist(run).catch(() => undefined);
   };
 
-  const restoreRuns = () => {
+  const hydrateRunFromStatusPath = (statusPath: string): BackgroundWorkflowRun | undefined => {
+    try {
+      const raw = JSON.parse(readFileSync(statusPath, "utf8")) as Partial<BackgroundWorkflowRun>;
+      if (!raw.id || !raw.name || !raw.status || !raw.artifactDir || !raw.statusPath) return undefined;
+      if (runs.has(raw.id)) return runs.get(raw.id);
+      let resolveSettled!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        resolveSettled = resolve;
+      });
+      if (raw.status === "running" && raw.ownerPid === process.pid) return undefined;
+      const status: BackgroundWorkflowStatus = raw.status === "running" ? "interrupted" : raw.status;
+      const restored: BackgroundWorkflowRun = {
+        id: raw.id,
+        name: raw.name,
+        description: raw.description ?? raw.name,
+        status,
+        cwd: raw.cwd ?? process.cwd(),
+        ...(raw.sessionId ? { sessionId: raw.sessionId } : {}),
+        ...(raw.ownerPid ? { ownerPid: raw.ownerPid } : {}),
+        startedAt: raw.startedAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        ...(raw.completedAt ? { completedAt: raw.completedAt } : status === "interrupted" ? { completedAt: new Date().toISOString() } : {}),
+        artifactDir: raw.artifactDir,
+        outputPath: raw.outputPath ?? join(raw.artifactDir, "output.md"),
+        resultPath: raw.resultPath ?? join(raw.artifactDir, "result.json"),
+        statusPath: raw.statusPath,
+        eventsPath: raw.eventsPath ?? join(raw.artifactDir, "events.jsonl"),
+        snapshot: raw.snapshot ?? createWorkflowSnapshot({ name: raw.name, description: raw.description ?? raw.name }),
+        ...(raw.result ? { result: raw.result as WorkflowRunResult } : {}),
+        ...(raw.error ? { error: raw.error } : status === "interrupted" ? { error: "Workflow was interrupted by process shutdown or reload." } : {}),
+        notified: raw.notified ?? true,
+        restored: true,
+        controller: new AbortController(),
+        settled,
+      };
+      resolveSettled();
+      runs.set(restored.id, restored);
+      if (restored.notified) notifiedIds.add(restored.id);
+      if (raw.status === "running") {
+        appendEventSync(restored, { type: "workflow.interrupted", id: restored.id });
+        void persist(restored).catch(() => undefined);
+      }
+      return restored;
+    } catch {
+      // Ignore malformed historical run records.
+      return undefined;
+    }
+  };
+
+  const refreshRunsFromDisk = () => {
     if (options.restore === false || !existsSync(runsRoot)) return;
     for (const entry of readdirSync(runsRoot, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const statusPath = join(runsRoot, entry.name, "status.json");
-      if (!existsSync(statusPath)) continue;
-      try {
-        const raw = JSON.parse(readFileSync(statusPath, "utf8")) as Partial<BackgroundWorkflowRun>;
-        if (!raw.id || !raw.name || !raw.status || !raw.artifactDir || !raw.statusPath) continue;
-        let resolveSettled!: () => void;
-        const settled = new Promise<void>((resolve) => {
-          resolveSettled = resolve;
-        });
-        if (raw.status === "running" && raw.ownerPid === process.pid) continue;
-        const status: BackgroundWorkflowStatus = raw.status === "running" ? "interrupted" : raw.status;
-        const restored: BackgroundWorkflowRun = {
-          id: raw.id,
-          name: raw.name,
-          description: raw.description ?? raw.name,
-          status,
-          cwd: raw.cwd ?? process.cwd(),
-          ...(raw.sessionId ? { sessionId: raw.sessionId } : {}),
-          ...(raw.ownerPid ? { ownerPid: raw.ownerPid } : {}),
-          startedAt: raw.startedAt ?? new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          ...(raw.completedAt ? { completedAt: raw.completedAt } : status === "interrupted" ? { completedAt: new Date().toISOString() } : {}),
-          artifactDir: raw.artifactDir,
-          outputPath: raw.outputPath ?? join(raw.artifactDir, "output.md"),
-          resultPath: raw.resultPath ?? join(raw.artifactDir, "result.json"),
-          statusPath: raw.statusPath,
-          eventsPath: raw.eventsPath ?? join(raw.artifactDir, "events.jsonl"),
-          snapshot: raw.snapshot ?? createWorkflowSnapshot({ name: raw.name, description: raw.description ?? raw.name }),
-          ...(raw.result ? { result: raw.result as WorkflowRunResult } : {}),
-          ...(raw.error ? { error: raw.error } : status === "interrupted" ? { error: "Workflow was interrupted by process shutdown or reload." } : {}),
-          notified: raw.notified ?? true,
-          restored: true,
-          controller: new AbortController(),
-          settled,
-        };
-        resolveSettled();
-        runs.set(restored.id, restored);
-        if (restored.notified) notifiedIds.add(restored.id);
-        if (raw.status === "running") {
-          appendEventSync(restored, { type: "workflow.interrupted", id: restored.id });
-          void persist(restored).catch(() => undefined);
-        }
-      } catch {
-        // Ignore malformed historical run records.
-      }
+      if (existsSync(statusPath)) hydrateRunFromStatusPath(statusPath);
     }
   };
 
-  restoreRuns();
+  const hydrateRunByPrefix = (idOrPrefix: string) => {
+    if (options.restore === false || !existsSync(runsRoot)) return undefined;
+    const matches: string[] = [];
+    for (const entry of readdirSync(runsRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith(idOrPrefix)) continue;
+      const statusPath = join(runsRoot, entry.name, "status.json");
+      if (existsSync(statusPath)) matches.push(statusPath);
+    }
+    return matches.length === 1 ? hydrateRunFromStatusPath(matches[0]!) : undefined;
+  };
+
+  refreshRunsFromDisk();
 
   const start = async (startOptions: BackgroundWorkflowStartOptions): Promise<BackgroundWorkflowRun> => {
     const script = startOptions.script.trim();
@@ -404,16 +421,21 @@ export function createBackgroundWorkflowManager(
     return run;
   };
 
-  const list = () => [...runs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const list = () => {
+    refreshRunsFromDisk();
+    return [...runs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  };
 
   const listActiveWork = () => list()
     .filter((run) => run.status === "running" && typeof run.sessionId === "string" && run.sessionId.length > 0)
     .map((run) => ({ id: run.id, sessionId: run.sessionId! }));
 
   const get = (idOrPrefix: string) => {
-    if (runs.has(idOrPrefix)) return runs.get(idOrPrefix);
-    const matches = [...runs.values()].filter((run) => run.id.startsWith(idOrPrefix));
-    return matches.length === 1 ? matches[0] : undefined;
+    const trimmed = idOrPrefix.trim();
+    if (runs.has(trimmed)) return runs.get(trimmed);
+    const matches = [...runs.values()].filter((run) => run.id.startsWith(trimmed));
+    if (matches.length === 1) return matches[0];
+    return hydrateRunByPrefix(trimmed);
   };
 
   const cancel = (idOrPrefix: string) => {

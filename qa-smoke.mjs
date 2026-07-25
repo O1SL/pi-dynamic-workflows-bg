@@ -58,5 +58,10 @@ const toolResult = await tool.execute?.('call-1', { script }, undefined, undefin
 });
 const text = toolResult?.content?.[0]?.text ?? '';
 if (!text.includes('Started background workflow qa_smoke')) throw new Error(`tool did not start background: ${text}`);
+const toolRunId = toolResult?.details?.id;
+if (typeof toolRunId === 'string') {
+  manager.cancel(toolRunId);
+  await manager.waitForRun(toolRunId, 2000).catch(() => undefined);
+}
 
 console.log(JSON.stringify({ ok: true, tmp, runId: run.id, notification: notifications[0] }, null, 2));

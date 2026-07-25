@@ -391,6 +391,32 @@ const restoredWithStale = makeManager(tmp, []);
 assert(restoredWithStale.get('20990101000000-stale-case')?.status === 'interrupted', 'stale running run not marked interrupted');
 assert(existsSync(join(staleDir, 'events.jsonl')), 'interrupted restore did not write events.jsonl');
 
+// 18. Runs written after manager construction are lazily restored from disk by id/prefix lookups.
+const lazyManager = makeManager(tmp, []);
+const lazyDir = join(tmp, '20990101000001-lazy-case');
+await mkdir(lazyDir, { recursive: true });
+await writeFile(join(lazyDir, 'events.jsonl'), JSON.stringify({ type: 'workflow.completed', id: '20990101000001-lazy-case', ts: new Date().toISOString() }) + '\n');
+await writeFile(join(lazyDir, 'status.json'), JSON.stringify({
+  id: '20990101000001-lazy-case',
+  name: 'lazy_case',
+  description: 'lazy disk restore case',
+  status: 'completed',
+  cwd: process.cwd(),
+  startedAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  completedAt: new Date().toISOString(),
+  artifactDir: lazyDir,
+  outputPath: join(lazyDir, 'output.md'),
+  resultPath: join(lazyDir, 'result.json'),
+  statusPath: join(lazyDir, 'status.json'),
+  eventsPath: join(lazyDir, 'events.jsonl'),
+  snapshot: { name: 'lazy_case', description: 'lazy disk restore case', phases: [], logs: [], agents: [], agentCount: 0, runningCount: 0, doneCount: 0, errorCount: 0 },
+  result: { meta: { name: 'lazy_case', description: 'lazy disk restore case' }, result: { lazy: true }, logs: [], phases: [], agentCount: 1, durationMs: 1 },
+}, null, 2));
+assert(lazyManager.get('20990101000001-lazy')?.status === 'completed', 'lazy run not restored by prefix lookup');
+assert(lazyManager.formatResult('20990101000001-lazy').includes('"lazy": true'), 'lazy restored result not formatted');
+assert(lazyManager.formatEvents('20990101000001-lazy').includes('workflow.completed'), 'lazy restored events not formatted');
+
 console.log(JSON.stringify({
   ok: true,
   tmp,
