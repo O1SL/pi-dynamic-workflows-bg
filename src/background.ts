@@ -74,7 +74,7 @@ export interface BackgroundWorkflowManager {
   resumeChild(idOrPrefix: string, prompt: string, selector?: string | number): Promise<string>;
   steerChild(idOrPrefix: string, prompt: string, selector?: string | number): Promise<string>;
   listWorktrees(idOrPrefix?: string): Array<{ runId: string; agentId: number; label: string; path: string; exists: boolean }>;
-  cleanupWorktrees(idOrPrefix?: string): Promise<{ removed: string[]; failed: Array<{ path: string; error: string }> }>;
+  cleanupWorktrees(idOrPrefix?: string, force?: boolean): Promise<{ removed: string[]; failed: Array<{ path: string; error: string }> }>;
   formatStatus(idOrPrefix?: string): string;
   formatResult(idOrPrefix: string): string;
   formatTranscript(idOrPrefix: string, selector?: string | number, lines?: number): string;
@@ -497,14 +497,30 @@ export function createBackgroundWorkflowManager(
       })));
   };
 
-  const cleanupWorktrees = async (idOrPrefix?: string) => {
+  const cleanupWorktrees = async (idOrPrefix?: string, force = false) => {
     const removed: string[] = [];
     const failed: Array<{ path: string; error: string }> = [];
     for (const item of listWorktrees(idOrPrefix)) {
       if (!item.exists) continue;
+      if (!force) {
+        try {
+          const { stdout } = await execFileAsync("git", ["-C", item.path, "status", "--porcelain"]);
+          if (stdout.trim()) {
+            failed.push({ path: item.path, error: "Worktree has uncommitted changes; pass force:true to remove it." });
+            continue;
+          }
+        } catch (error) {
+          failed.push({ path: item.path, error: error instanceof Error ? error.message : String(error) });
+          continue;
+        }
+      }
       try {
         await execFileAsync("git", ["worktree", "remove", "--force", item.path]);
       } catch (error) {
+        if (!force) {
+          failed.push({ path: item.path, error: error instanceof Error ? error.message : String(error) });
+          continue;
+        }
         try {
           await rm(item.path, { recursive: true, force: true });
         } catch (rmError) {

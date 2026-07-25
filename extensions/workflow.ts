@@ -173,10 +173,13 @@ export default function extension(pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "workflow_worktree_cleanup",
     label: "Workflow Worktree Cleanup",
-    description: "Remove git worktrees created by workflow child agents.",
-    parameters: Type.Object({ id: Type.Optional(Type.String({ description: "Optional run id or prefix." })) }),
+    description: "Remove git worktrees created by workflow child agents. Refuses dirty worktrees unless force:true is passed.",
+    parameters: Type.Object({
+      id: Type.Optional(Type.String({ description: "Optional run id or prefix." })),
+      force: Type.Optional(Type.Boolean({ description: "If true, remove dirty worktrees too." })),
+    }),
     async execute(_id, params) {
-      const result = await manager.cleanupWorktrees(params.id);
+      const result = await manager.cleanupWorktrees(params.id, params.force === true);
       const text = [
         `Removed ${result.removed.length} workflow worktree(s).`,
         ...result.removed.map((path) => `- removed: ${path}`),
@@ -330,7 +333,7 @@ export default function extension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("workflow-worktree-cleanup", {
-    description: "Remove workflow-created git worktrees. Usage: /workflow-worktree-cleanup [run-id-prefix]",
+    description: "Remove clean workflow-created git worktrees. Usage: /workflow-worktree-cleanup [run-id-prefix]",
     handler: async (args, ctx) => {
       const result = await manager.cleanupWorktrees(args.trim() || undefined);
       ctx.ui.notify(`Removed ${result.removed.length} workflow worktree(s).${result.failed.length ? ` Failed: ${result.failed.length}` : ""}`, result.failed.length ? "warning" : "info");

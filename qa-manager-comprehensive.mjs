@@ -305,9 +305,13 @@ const worktreeEvents = await readFile(worktreeRun.eventsPath, 'utf8');
 assert(worktreeEvents.includes('workflow.agent.worktree'), 'worktree event missing');
 const listedWorktrees = manager.listWorktrees(worktreeRun.id);
 assert(listedWorktrees.length === 1 && listedWorktrees[0].exists, 'listWorktrees did not report created worktree');
-const cleanup = await manager.cleanupWorktrees(worktreeRun.id);
-assert(cleanup.removed.length === 1 && cleanup.failed.length === 0, `cleanup failed: ${JSON.stringify(cleanup)}`);
-assert(!existsSync(worktreePath), 'worktree still exists after cleanup');
+await writeFile(join(worktreePath, 'dirty.txt'), 'dirty change\n');
+const refusedCleanup = await manager.cleanupWorktrees(worktreeRun.id);
+assert(refusedCleanup.removed.length === 0 && refusedCleanup.failed.length === 1, `dirty cleanup should be refused: ${JSON.stringify(refusedCleanup)}`);
+assert(existsSync(worktreePath), 'dirty worktree should still exist after refused cleanup');
+const cleanup = await manager.cleanupWorktrees(worktreeRun.id, true);
+assert(cleanup.removed.length === 1 && cleanup.failed.length === 0, `force cleanup failed: ${JSON.stringify(cleanup)}`);
+assert(!existsSync(worktreePath), 'worktree still exists after force cleanup');
 
 // 14. agent({ toolBudget }) is passed through to the child runner.
 let observedToolBudget;
