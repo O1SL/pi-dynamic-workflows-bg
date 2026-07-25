@@ -12,6 +12,7 @@ export interface WorkflowAgentSnapshot {
   resultPreview?: string;
   error?: string;
   sessionFile?: string;
+  worktreePath?: string;
 }
 
 export interface WorkflowSnapshot {

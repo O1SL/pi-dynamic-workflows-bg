@@ -1,5 +1,6 @@
 import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBackgroundWorkflowManager } from './dist/src/index.js';
@@ -269,7 +270,32 @@ assert(nonRetryRun.status === 'completed', `non-retry workflow status ${nonRetry
 assert(nonRetryModels.join(',') === 'primary/model', `non-retry attempted fallback unexpectedly: ${nonRetryModels.join(',')}`);
 assert(nonRetryRun.result?.result?.result === null, 'non-retry failed branch should return null');
 
-// 13. Restore historical runs and convert stale running records to interrupted.
+// 13. Worktree isolation creates a real git worktree and records it in snapshot/events.
+const repoDir = join(tmp, 'repo');
+await mkdir(repoDir, { recursive: true });
+execFileSync('git', ['init'], { cwd: repoDir, stdio: 'ignore' });
+execFileSync('git', ['config', 'user.email', 'qa@example.com'], { cwd: repoDir });
+execFileSync('git', ['config', 'user.name', 'QA'], { cwd: repoDir });
+await writeFile(join(repoDir, 'README.md'), 'qa\n');
+execFileSync('git', ['add', 'README.md'], { cwd: repoDir });
+execFileSync('git', ['commit', '-m', 'init'], { cwd: repoDir, stdio: 'ignore' });
+const worktreeScript = `export const meta = { name: 'worktree_case', description: 'worktree case' }
+const result = await agent('isolated', { label: 'isolated child', isolation: 'worktree' })
+return { result }
+`;
+const worktreeRun = await manager.start({
+  script: worktreeScript,
+  cwd: repoDir,
+  sessionId: 'session-worktree',
+  agent: { async run() { return 'isolated-ok'; } },
+});
+await manager.waitForRun(worktreeRun.id, 2000);
+const worktreePath = worktreeRun.snapshot.agents[0]?.worktreePath;
+assert(worktreePath && existsSync(worktreePath), `worktree path missing: ${worktreePath}`);
+const worktreeEvents = await readFile(worktreeRun.eventsPath, 'utf8');
+assert(worktreeEvents.includes('workflow.agent.worktree'), 'worktree event missing');
+
+// 14. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');

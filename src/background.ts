@@ -299,6 +299,14 @@ export function createBackgroundWorkflowManager(
             });
             update(run);
           },
+          onAgentWorktree(event) {
+            const agent = [...run.snapshot.agents]
+              .reverse()
+              .find((item) => item.label === event.label && item.status === "running");
+            if (agent) agent.worktreePath = event.worktreePath;
+            appendEventSync(run, { type: "workflow.agent.worktree", label: event.label, phase: event.phase, worktreePath: event.worktreePath });
+            update(run);
+          },
           onAgentSession(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
@@ -315,7 +323,7 @@ export function createBackgroundWorkflowManager(
               agent.status = event.result === null ? "error" : "done";
               agent.resultPreview = preview(event.result);
             }
-            appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result), sessionFile: agent?.sessionFile });
+            appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result), sessionFile: agent?.sessionFile, worktreePath: agent?.worktreePath });
             update(run);
           },
         });

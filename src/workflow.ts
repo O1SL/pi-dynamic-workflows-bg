@@ -1,8 +1,14 @@
+import { execFile } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import vm from "node:vm";
 import type { Node } from "acorn";
 import { parse } from "acorn";
 import type { TSchema } from "typebox";
 import { WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface WorkflowMetaPhase {
   title: string;
@@ -28,6 +34,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onAgentStart?: (event: { label: string; phase?: string; prompt: string }) => void;
   onAgentEnd?: (event: { label: string; phase?: string; result: unknown }) => void;
   onAgentSession?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
+  onAgentWorktree?: (event: { label: string; phase?: string; worktreePath: string }) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -115,12 +122,19 @@ export async function runWorkflow<T = unknown>(
       try {
         throwIfAborted();
         const childSignal = createChildSignal(options.signal, normalizedOptions.timeoutMs);
+        const worktreePath = normalizedOptions.isolation === "worktree"
+          ? await createWorkflowWorktree(options.cwd ?? process.cwd(), label)
+          : undefined;
+        if (worktreePath) options.onAgentWorktree?.({ label, phase: assignedPhase, worktreePath });
+        const effectiveAgentRunner = worktreePath && !options.agent
+          ? new WorkflowAgent({ ...options, cwd: worktreePath, sessionDir: options.sessionDir ? join(options.sessionDir, "worktrees", sanitizePathSegment(label)) : undefined })
+          : agentRunner;
         const modelsToTry = [normalizedOptions.model, ...(normalizedOptions.fallbackModels ?? [])];
         let lastError: unknown;
         for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
           const model = modelsToTry[attempt];
           try {
-            const result = await agentRunner.run(taskPrompt, {
+            const result = await effectiveAgentRunner.run(taskPrompt, {
               label,
               schema: normalizedOptions.schema,
               signal: childSignal,
@@ -462,6 +476,19 @@ function optionalPositiveNumber(value: unknown, name: string): number | undefine
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new TypeError(`${name} must be a positive number`);
   return value;
+}
+
+async function createWorkflowWorktree(cwd: string, label: string): Promise<string> {
+  await execFileAsync("git", ["-C", cwd, "rev-parse", "--show-toplevel"]);
+  const root = join(cwd, ".pi-workflows", "worktrees");
+  await mkdir(root, { recursive: true });
+  const path = join(root, `${Date.now()}-${sanitizePathSegment(label)}`);
+  await execFileAsync("git", ["-C", cwd, "worktree", "add", "--detach", path, "HEAD"]);
+  return path;
+}
+
+function sanitizePathSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "agent";
 }
 
 function createChildSignal(parent: AbortSignal | undefined, timeoutMs: number | undefined): AbortSignal | undefined {
