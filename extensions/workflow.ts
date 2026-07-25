@@ -1,5 +1,6 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { createBackgroundWorkflowManager, createWorkflowTool } from "../src/index.js";
 
 type BackgroundWorkDisposer = () => void;
@@ -77,6 +78,52 @@ export default function extension(pi: ExtensionAPI) {
   const workflowTool = createWorkflowTool({ backgroundManager: manager });
   pi.registerTool(workflowTool);
 
+  pi.registerTool(defineTool({
+    name: "workflow_status",
+    label: "Workflow Status",
+    description: "List background workflows or inspect one background workflow by id/prefix.",
+    parameters: Type.Object({ id: Type.Optional(Type.String({ description: "Optional run id or prefix." })) }),
+    async execute(_id, params) {
+      return { content: [{ type: "text", text: manager.formatStatus(params.id) }], details: { action: "status", id: params.id } };
+    },
+  }));
+
+  pi.registerTool(defineTool({
+    name: "workflow_result",
+    label: "Workflow Result",
+    description: "Read the current or final result of a background workflow by id/prefix.",
+    parameters: Type.Object({ id: Type.String({ description: "Run id or prefix." }) }),
+    async execute(_id, params) {
+      return { content: [{ type: "text", text: manager.formatResult(params.id) }], details: { action: "result", id: params.id } };
+    },
+  }));
+
+  pi.registerTool(defineTool({
+    name: "workflow_cancel",
+    label: "Workflow Cancel",
+    description: "Cancel a running background workflow by id/prefix.",
+    parameters: Type.Object({ id: Type.String({ description: "Run id or prefix." }) }),
+    async execute(_id, params) {
+      const ok = manager.cancel(params.id);
+      return { content: [{ type: "text", text: ok ? `Cancelled background workflow ${params.id}` : `No running workflow found for ${params.id}` }], details: { action: "cancel", id: params.id, cancelled: ok } };
+    },
+  }));
+
+  pi.registerTool(defineTool({
+    name: "workflow_wait",
+    label: "Workflow Wait",
+    description: "Wait for a background workflow by id/prefix, then return its result. Use when the current turn must consume a workflow result.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Run id or prefix." }),
+      timeoutMs: Type.Optional(Type.Number({ description: "Timeout in milliseconds. Default 30 minutes." })),
+    }),
+    async execute(_id, params) {
+      const run = await manager.waitForRun(params.id, params.timeoutMs);
+      if (!run) return { content: [{ type: "text", text: `No background workflow found for: ${params.id}` }], isError: true, details: { action: "wait", id: params.id, found: false, status: "not_found" } };
+      return { content: [{ type: "text", text: manager.formatResult(run.id) }], details: { action: "wait", id: run.id, found: true, status: run.status } };
+    },
+  }));
+
   pi.registerMessageRenderer("background-workflow-result", (message, options, theme) => {
     const content = typeof message.content === "string" ? message.content : "";
     const details = message.details as { name?: string; status?: string; outputPath?: string } | undefined;
@@ -124,9 +171,12 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    if (!active.includes(workflowTool.name)) {
-      pi.setActiveTools([...active, workflowTool.name]);
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_cancel", "workflow_wait"];
+    const next = [...active];
+    for (const tool of requiredTools) {
+      if (!next.includes(tool)) next.push(tool);
     }
+    if (next.length !== active.length) pi.setActiveTools(next);
   });
 
   pi.on("agent_end", async (_event, ctx) => {

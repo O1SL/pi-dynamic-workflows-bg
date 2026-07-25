@@ -56,6 +56,7 @@ export interface BackgroundWorkflowManager {
   listActiveWork(): Array<{ id: string; sessionId: string }>;
   get(idOrPrefix: string): BackgroundWorkflowRun | undefined;
   cancel(idOrPrefix: string): boolean;
+  waitForRun(idOrPrefix: string, timeoutMs?: number): Promise<BackgroundWorkflowRun | undefined>;
   waitForIdle(sessionId?: string, timeoutMs?: number): Promise<void>;
   formatStatus(idOrPrefix?: string): string;
   formatResult(idOrPrefix: string): string;
@@ -215,6 +216,18 @@ export function createBackgroundWorkflowManager(
     return true;
   };
 
+  const waitForRun = async (idOrPrefix: string, timeoutMs = 30 * 60 * 1000) => {
+    const run = get(idOrPrefix);
+    if (!run) return undefined;
+    if (run.status !== "running") return run;
+    const timeout = new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timed out waiting for background workflow ${run.id}.`)), timeoutMs);
+      timer.unref?.();
+    });
+    await Promise.race([run.settled, timeout]);
+    return run;
+  };
+
   const waitForIdle = async (sessionId?: string, timeoutMs = 30 * 60 * 1000) => {
     const deadline = Date.now() + timeoutMs;
     while (true) {
@@ -249,7 +262,7 @@ export function createBackgroundWorkflowManager(
     return formatRunResult(run);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForIdle, formatStatus, formatResult };
+  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, formatStatus, formatResult };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {

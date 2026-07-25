@@ -41,6 +41,8 @@ const success = await manager.start({
   agent: { async run(prompt, opts) { return `${opts.label}:${prompt}`; } },
 });
 assert(manager.listActiveWork().some((item) => item.id === success.id && item.sessionId === 'session-a'), 'active work missing success run');
+const waitedSuccess = await manager.waitForRun(success.id, 2000);
+assert(waitedSuccess === success, 'waitForRun did not return the success run');
 await manager.waitForIdle('session-a', 2000);
 assert(success.status === 'completed', `success status ${success.status}`);
 assert(manager.listActiveWork().every((item) => item.id !== success.id), 'completed run still active');
@@ -99,6 +101,7 @@ const cancelRun = await manager.start({
   },
 });
 assert(manager.cancel(cancelRun.id), 'cancel returned false');
+await manager.waitForRun(cancelRun.id, 2000);
 await waitUntil(() => cancelRun.status !== 'running', 'cancel terminal');
 assert(cancelRun.status === 'cancelled', `cancel status ${cancelRun.status}`);
 assert(abortObserved, 'agent did not observe abort');

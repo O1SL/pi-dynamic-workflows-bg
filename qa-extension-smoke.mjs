@@ -32,7 +32,9 @@ const pi = {
 
 extension(pi);
 
-if (!tools.has('workflow')) throw new Error('workflow tool was not registered');
+for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_cancel', 'workflow_wait']) {
+  if (!tools.has(name)) throw new Error(`${name} tool was not registered`);
+}
 for (const name of ['workflow-status', 'workflow-result', 'workflow-cancel']) {
   if (!commands.has(name)) throw new Error(`${name} command was not registered`);
 }

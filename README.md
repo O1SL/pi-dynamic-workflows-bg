@@ -55,6 +55,15 @@ Result:
 /workflow-cancel <id-prefix>      # cancel a running workflow
 ```
 
+The model also gets explicit management tools so it can consume background results without relying on slash commands or `subagent_wait`:
+
+```text
+workflow_status                   # list or inspect runs
+workflow_result                   # read current/final result
+workflow_cancel                   # cancel a running workflow
+workflow_wait                     # wait for one run and return its result
+```
+
 Artifacts are written to:
 
 ```text
@@ -103,6 +112,7 @@ Available globals are the same as the upstream plugin: `agent`, `parallel`, `pip
 ## Notes
 
 - Background completion uses `pi.sendMessage({ customType: "background-workflow-result", ... }, { triggerTurn: true })`, not a UI-only custom entry. The result is visible to the parent model on the next turn.
+- Prefer `workflow_wait` when the current model turn must block until a specific workflow finishes. It is native to this extension and does not depend on `pi-subagents`.
 - The extension registers a best-effort compatible `pi-subagents.background-work.v1` provider. This works when both extensions share the same Pi extension realm (verified with explicit `-e` loading), but global package auto-loading can isolate realms enough that `subagent_wait` does not see workflow provider items. Completion messages remain model-visible either way.
 - Background progress is persisted to artifact files. Live inline tool streaming is only available in `foreground:true` mode.
 - Runs are in-memory for cancellation/status during the current Pi process. If Pi restarts, completed artifacts remain on disk, but running jobs are not resumed.
