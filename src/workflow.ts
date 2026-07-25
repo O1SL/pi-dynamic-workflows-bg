@@ -36,7 +36,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onAgentEnd?: (event: { label: string; phase?: string; result: unknown }) => void;
   onAgentSession?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
   onAgentWorktree?: (event: { label: string; phase?: string; worktreePath: string }) => void;
-  onAgentAttempt?: (event: { label: string; phase?: string; model?: string; status: "failed" | "succeeded"; error?: string }) => void;
+  onAgentAttempt?: (event: { label: string; phase?: string; model?: string; attempt: number; status: "failed" | "succeeded"; error?: string }) => void;
   onAgentToolBudget?: (event: { label: string; phase?: string } & ToolBudgetEvent) => void;
   onAgentLiveSession?: (event: { label: string; phase?: string; session: any; sessionFile?: string }) => void;
   onAgentLiveSessionEnd?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
@@ -62,6 +62,8 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
   timeoutMs?: number;
   toolBudget?: AgentToolBudget;
   turnBudget?: AgentTurnBudget;
+  retry?: number;
+  retryDelayMs?: number;
 }
 
 interface RuntimeState {
@@ -137,11 +139,16 @@ export async function runWorkflow<T = unknown>(
           ? new WorkflowAgent({ ...options, cwd: worktreePath, sessionDir: options.sessionDir ? join(options.sessionDir, "worktrees", sanitizePathSegment(label)) : undefined })
           : agentRunner;
         const modelsToTry = [normalizedOptions.model, ...(normalizedOptions.fallbackModels ?? [])];
+        const retry = normalizedOptions.retry ?? 1;
+        const retryDelayMs = normalizedOptions.retryDelayMs ?? 1000;
         let lastError: unknown;
-        for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
-          const model = modelsToTry[attempt];
-          try {
-            const result = await effectiveAgentRunner.run(taskPrompt, {
+        let globalAttempt = 0;
+        for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
+          const model = modelsToTry[modelIndex];
+          for (let retryAttempt = 0; retryAttempt <= retry; retryAttempt++) {
+            globalAttempt++;
+            try {
+              const result = await effectiveAgentRunner.run(taskPrompt, {
               label,
               schema: normalizedOptions.schema,
               signal: childSignal,
@@ -153,21 +160,30 @@ export async function runWorkflow<T = unknown>(
               onLiveSessionEnd: (info: { sessionFile?: string }) => options.onAgentLiveSessionEnd?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
               instructions: buildAgentInstructions(assignedPhase, { ...normalizedOptions, model }),
               onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
-            } as any);
-            lastError = undefined;
-            options.onAgentAttempt?.({ label, phase: assignedPhase, model, status: "succeeded" });
-            if (attempt > 0) log(`agent ${label} succeeded with fallback model ${model}`);
-            throwIfAborted();
-            state.spent += estimateTokens(result);
-            options.onAgentEnd?.({ label, phase: assignedPhase, result });
-            return result;
-          } catch (error) {
-            lastError = error;
-            options.onAgentAttempt?.({ label, phase: assignedPhase, model, status: "failed", error: error instanceof Error ? error.message : String(error) });
-            if (options.signal?.aborted || childSignal?.aborted) throw error;
-            const hasFallback = attempt + 1 < modelsToTry.length;
-            if (!hasFallback || !isRetryableModelError(error)) throw error;
-            log(`agent ${label} failed with model ${model ?? "default"}; retrying fallback ${modelsToTry[attempt + 1]}: ${error instanceof Error ? error.message : String(error)}`);
+              } as any);
+              lastError = undefined;
+              options.onAgentAttempt?.({ label, phase: assignedPhase, model, attempt: globalAttempt, status: "succeeded" });
+              if (modelIndex > 0) log(`agent ${label} succeeded with fallback model ${model}`);
+              if (retryAttempt > 0) log(`agent ${label} succeeded after retry ${retryAttempt} with model ${model ?? "default"}`);
+              throwIfAborted();
+              state.spent += estimateTokens(result);
+              options.onAgentEnd?.({ label, phase: assignedPhase, result });
+              return result;
+            } catch (error) {
+              lastError = error;
+              options.onAgentAttempt?.({ label, phase: assignedPhase, model, attempt: globalAttempt, status: "failed", error: error instanceof Error ? error.message : String(error) });
+              if (options.signal?.aborted || childSignal?.aborted) throw error;
+              if (!isRetryableModelError(error)) throw error;
+              if (retryAttempt < retry) {
+                log(`agent ${label} failed with model ${model ?? "default"}; retrying attempt ${retryAttempt + 1}/${retry}: ${error instanceof Error ? error.message : String(error)}`);
+                await sleep(retryDelayMs);
+                continue;
+              }
+              const hasFallback = modelIndex + 1 < modelsToTry.length;
+              if (!hasFallback) throw error;
+              log(`agent ${label} failed with model ${model ?? "default"}; retrying fallback ${modelsToTry[modelIndex + 1]}: ${error instanceof Error ? error.message : String(error)}`);
+              break;
+            }
           }
         }
         throw lastError instanceof Error ? lastError : new Error(String(lastError));
@@ -477,7 +493,15 @@ function normalizeAgentOptions(value: unknown): AgentOptions {
     fallbackModels: optionalStringArray((options as AgentOptions & { fallbackModels?: unknown }).fallbackModels, "agent fallbackModels"),
     toolBudget: optionalToolBudget((options as AgentOptions & { toolBudget?: unknown }).toolBudget),
     turnBudget: optionalTurnBudget((options as AgentOptions & { turnBudget?: unknown }).turnBudget),
+    retry: optionalNonNegativeInteger((options as AgentOptions & { retry?: unknown }).retry, "agent retry") ?? 1,
+    retryDelayMs: optionalPositiveNumber((options as AgentOptions & { retryDelayMs?: unknown }).retryDelayMs, "agent retryDelayMs") ?? 1000,
   };
+}
+
+function optionalNonNegativeInteger(value: unknown, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative integer`);
+  return value;
 }
 
 function optionalTurnBudget(value: unknown): AgentTurnBudget | undefined {
@@ -566,7 +590,12 @@ function buildAgentInstructions(phase: string | undefined, options: AgentOptions
   if (options.fallbackModels?.length) lines.push(`Fallback models: ${options.fallbackModels.join(", ")}`);
   if (options.toolBudget) lines.push(`Tool budget hard limit: ${options.toolBudget.hard}`);
   if (options.turnBudget) lines.push(`Turn budget: ${options.turnBudget.maxTurns} + ${options.turnBudget.graceTurns ?? 0} grace`);
+  if (options.retry !== undefined) lines.push(`Retry budget: ${options.retry}`);
   return lines.length ? lines.join("\n") : undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isRetryableModelError(error: unknown): boolean {

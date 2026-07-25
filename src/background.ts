@@ -339,9 +339,9 @@ export function createBackgroundWorkflowManager(
               .find((item) => item.label === event.label && item.status === "running");
             if (agent) {
               agent.attempts ??= [];
-              agent.attempts.push({ model: event.model, status: event.status, ...(event.error ? { error: event.error } : {}) });
+              agent.attempts.push({ model: event.model, attempt: event.attempt, status: event.status, ...(event.error ? { error: event.error } : {}) });
             }
-            appendEventSync(run, { type: "workflow.agent.attempt", label: event.label, phase: event.phase, model: event.model, status: event.status, error: event.error });
+            appendEventSync(run, { type: "workflow.agent.attempt", label: event.label, phase: event.phase, model: event.model, attempt: event.attempt, status: event.status, error: event.error });
             update(run);
           },
           onAgentWorktree(event) {

@@ -73,16 +73,18 @@ It does **not** revive the exact previous live process, preserve pending tool ca
 
 **Status:** partial.
 
-Basic fallback is implemented with:
+Basic same-model retry and fallback are implemented with:
 
 ```js
 agent('...', {
+  retry: 2,
+  retryDelayMs: 1000,
   model: 'primary/model',
   fallbackModels: ['fallback/model']
 })
 ```
 
-Retryable provider/model failures use fallback models. Attempts are recorded in snapshot and `events.jsonl`.
+`agent()` retries retryable provider/model failures once by default; `retry` and `retryDelayMs` tune this. Retryable provider/model failures can then use fallback models. Attempts are recorded in snapshot and `events.jsonl`.
 
 Not implemented:
 

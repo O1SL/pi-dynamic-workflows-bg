@@ -13,7 +13,7 @@ export interface WorkflowAgentSnapshot {
   error?: string;
   sessionFile?: string;
   worktreePath?: string;
-  attempts?: Array<{ model?: string; status: "failed" | "succeeded"; error?: string }>;
+  attempts?: Array<{ model?: string; attempt?: number; status: "failed" | "succeeded"; error?: string }>;
   toolBudget?: { count: number; softReached?: boolean; hardExceeded?: boolean; tool?: string; hard?: number; soft?: number };
 }
 

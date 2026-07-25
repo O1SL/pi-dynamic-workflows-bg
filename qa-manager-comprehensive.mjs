@@ -233,7 +233,7 @@ assert(observedModel === 'provider/model-id', `agent model option was not passed
 
 // 11. Retry with fallbackModels on retryable provider/model failures.
 const fallbackScript = `export const meta = { name: 'fallback_case', description: 'fallback case' }
-const result = await agent('fallback-check', { label: 'fallback child', model: 'primary/model', fallbackModels: ['fallback/model'] })
+const result = await agent('fallback-check', { label: 'fallback child', model: 'primary/model', fallbackModels: ['fallback/model'], retry: 0 })
 return { result }
 `;
 const attemptedModels = [];
@@ -258,7 +258,33 @@ assert(fallbackAttempts[0].status === 'failed' && fallbackAttempts[1].status ===
 const fallbackEvents = await readFile(fallbackRun.eventsPath, 'utf8');
 assert(fallbackEvents.includes('workflow.agent.attempt') && fallbackEvents.includes('fallback/model'), 'fallback attempt events missing');
 
-// 12. Non-retryable failures do not use fallbackModels.
+// 12. Retryable provider/model failures retry the same agent branch before returning null.
+const retryScript = `export const meta = { name: 'retry_case', description: 'retry case' }
+const result = await agent('retry-check', { label: 'retry child', retry: 2, retryDelayMs: 1 })
+return { result }
+`;
+let retryAttempts = 0;
+const retryRun = await manager.start({
+  script: retryScript,
+  sessionId: 'session-retry',
+  agent: {
+    async run() {
+      retryAttempts++;
+      if (retryAttempts < 3) throw new Error('429 transient provider resource unavailable');
+      return 'retry-ok';
+    },
+  },
+});
+await manager.waitForRun(retryRun.id, 2000);
+assert(retryRun.status === 'completed', `retry run status ${retryRun.status}`);
+assert(retryAttempts === 3, `retry attempts mismatch: ${retryAttempts}`);
+assert(retryRun.result?.result?.result === 'retry-ok', 'retry result mismatch');
+const retryLedger = retryRun.snapshot.agents[0]?.attempts ?? [];
+assert(retryLedger.length === 3 && retryLedger[2].status === 'succeeded', `retry ledger mismatch: ${JSON.stringify(retryLedger)}`);
+const retryEvents = await readFile(retryRun.eventsPath, 'utf8');
+assert(retryEvents.includes('"attempt":1') && retryEvents.includes('"attempt":3'), 'retry attempt events missing attempt numbers');
+
+// 13. Non-retryable failures do not use fallbackModels.
 const nonRetryScript = `export const meta = { name: 'no_fallback_case', description: 'no fallback case' }
 const result = await agent('no-fallback-check', { label: 'no fallback child', model: 'primary/model', fallbackModels: ['fallback/model'] })
 return { result }
@@ -279,7 +305,7 @@ assert(nonRetryRun.status === 'completed', `non-retry workflow status ${nonRetry
 assert(nonRetryModels.join(',') === 'primary/model', `non-retry attempted fallback unexpectedly: ${nonRetryModels.join(',')}`);
 assert(nonRetryRun.result?.result?.result === null, 'non-retry failed branch should return null');
 
-// 13. Worktree isolation creates a real git worktree and records it in snapshot/events.
+// 14. Worktree isolation creates a real git worktree and records it in snapshot/events.
 const repoDir = join(tmp, 'repo');
 await mkdir(repoDir, { recursive: true });
 execFileSync('git', ['init'], { cwd: repoDir, stdio: 'ignore' });
@@ -313,7 +339,7 @@ const cleanup = await manager.cleanupWorktrees(worktreeRun.id, true);
 assert(cleanup.removed.length === 1 && cleanup.failed.length === 0, `force cleanup failed: ${JSON.stringify(cleanup)}`);
 assert(!existsSync(worktreePath), 'worktree still exists after force cleanup');
 
-// 14. agent({ toolBudget }) is passed through to the child runner.
+// 15. agent({ toolBudget }) is passed through to the child runner.
 let observedToolBudget;
 const toolBudgetScript = `export const meta = { name: 'tool_budget_case', description: 'tool budget case' }
 const result = await agent('tool-budget-check', { label: 'tool budget child', toolBudget: { hard: 2, block: '*' } })
@@ -327,7 +353,7 @@ const toolBudgetRun = await manager.start({
 await manager.waitForRun(toolBudgetRun.id, 2000);
 assert(observedToolBudget?.hard === 2 && observedToolBudget?.block === '*', `toolBudget not passed through: ${JSON.stringify(observedToolBudget)}`);
 
-// 15. agent({ turnBudget }) is passed through to the child runner.
+// 16. agent({ turnBudget }) is passed through to the child runner.
 let observedTurnBudget;
 const turnBudgetScript = `export const meta = { name: 'turn_budget_case', description: 'turn budget case' }
 const result = await agent('turn-budget-check', { label: 'turn budget child', turnBudget: { maxTurns: 1, graceTurns: 1 } })
@@ -341,7 +367,7 @@ const turnBudgetRun = await manager.start({
 await manager.waitForRun(turnBudgetRun.id, 2000);
 assert(observedTurnBudget?.maxTurns === 1 && observedTurnBudget?.graceTurns === 1, `turnBudget not passed through: ${JSON.stringify(observedTurnBudget)}`);
 
-// 16. Restore historical runs and convert stale running records to interrupted.
+// 17. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');
