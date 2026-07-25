@@ -305,7 +305,21 @@ const cleanup = await manager.cleanupWorktrees(worktreeRun.id);
 assert(cleanup.removed.length === 1 && cleanup.failed.length === 0, `cleanup failed: ${JSON.stringify(cleanup)}`);
 assert(!existsSync(worktreePath), 'worktree still exists after cleanup');
 
-// 14. Restore historical runs and convert stale running records to interrupted.
+// 14. agent({ toolBudget }) is passed through to the child runner.
+let observedToolBudget;
+const toolBudgetScript = `export const meta = { name: 'tool_budget_case', description: 'tool budget case' }
+const result = await agent('tool-budget-check', { label: 'tool budget child', toolBudget: { hard: 2, block: '*' } })
+return { result }
+`;
+const toolBudgetRun = await manager.start({
+  script: toolBudgetScript,
+  sessionId: 'session-tool-budget',
+  agent: { async run(_prompt, opts) { observedToolBudget = opts.toolBudget; return 'tool-budget-ok'; } },
+});
+await manager.waitForRun(toolBudgetRun.id, 2000);
+assert(observedToolBudget?.hard === 2 && observedToolBudget?.block === '*', `toolBudget not passed through: ${JSON.stringify(observedToolBudget)}`);
+
+// 15. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');

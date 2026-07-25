@@ -6,7 +6,7 @@ import vm from "node:vm";
 import type { Node } from "acorn";
 import { parse } from "acorn";
 import type { TSchema } from "typebox";
-import { WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
+import { WorkflowAgent, type AgentToolBudget, type WorkflowAgentOptions } from "./agent.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -56,6 +56,7 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
   isolation?: "worktree";
   agentType?: string;
   timeoutMs?: number;
+  toolBudget?: AgentToolBudget;
 }
 
 interface RuntimeState {
@@ -140,6 +141,7 @@ export async function runWorkflow<T = unknown>(
               schema: normalizedOptions.schema,
               signal: childSignal,
               model,
+              toolBudget: normalizedOptions.toolBudget,
               instructions: buildAgentInstructions(assignedPhase, { ...normalizedOptions, model }),
               onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
             } as any);
@@ -464,7 +466,19 @@ function normalizeAgentOptions(value: unknown): AgentOptions {
     agentType: optionalString(options.agentType, "agent type"),
     timeoutMs: optionalPositiveNumber(options.timeoutMs, "agent timeoutMs"),
     fallbackModels: optionalStringArray((options as AgentOptions & { fallbackModels?: unknown }).fallbackModels, "agent fallbackModels"),
+    toolBudget: optionalToolBudget((options as AgentOptions & { toolBudget?: unknown }).toolBudget),
   };
+}
+
+function optionalToolBudget(value: unknown): AgentToolBudget | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("agent toolBudget must be an object");
+  const raw = value as Record<string, unknown>;
+  const hard = optionalPositiveNumber(raw.hard, "agent toolBudget.hard");
+  if (hard === undefined) throw new TypeError("agent toolBudget.hard is required");
+  const soft = optionalPositiveNumber(raw.soft, "agent toolBudget.soft");
+  const block = raw.block === undefined ? undefined : raw.block === "*" ? "*" : optionalStringArray(raw.block, "agent toolBudget.block");
+  return { hard, ...(soft !== undefined ? { soft } : {}), ...(block !== undefined ? { block } : {}) };
 }
 
 function optionalStringArray(value: unknown, name: string): string[] | undefined {
@@ -530,6 +544,7 @@ function buildAgentInstructions(phase: string | undefined, options: AgentOptions
   if (options.model) lines.push(`Requested model: ${options.model}`);
   if (options.timeoutMs) lines.push(`Requested timeoutMs: ${options.timeoutMs}`);
   if (options.fallbackModels?.length) lines.push(`Fallback models: ${options.fallbackModels.join(", ")}`);
+  if (options.toolBudget) lines.push(`Tool budget hard limit: ${options.toolBudget.hard}`);
   return lines.length ? lines.join("\n") : undefined;
 }
 

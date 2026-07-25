@@ -23,6 +23,12 @@ export interface WorkflowAgentOptions {
   instructions?: string;
 }
 
+export interface AgentToolBudget {
+  soft?: number;
+  hard: number;
+  block?: string[] | "*";
+}
+
 export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefined> {
   label?: string;
   schema?: TSchemaDef;
@@ -31,6 +37,7 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   signal?: AbortSignal;
   onSession?: (info: { sessionFile?: string; label?: string }) => void;
   model?: string;
+  toolBudget?: AgentToolBudget;
 }
 
 export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef extends TSchema
@@ -57,7 +64,7 @@ export class WorkflowAgent {
     options: AgentRunOptions<TSchemaDef> = {},
   ): Promise<AgentRunResult<TSchemaDef>> {
     const capture: StructuredOutputCapture<any> = { called: false, value: undefined };
-    const customTools: ToolDefinition[] = [...this.baseTools, ...(options.tools ?? [])];
+    const customTools: ToolDefinition[] = this.applyToolBudget([...this.baseTools, ...(options.tools ?? [])], options.toolBudget);
 
     if (options.schema) {
       customTools.push(createStructuredOutputTool({ schema: options.schema, capture }) as unknown as ToolDefinition);
@@ -108,7 +115,7 @@ export class WorkflowAgent {
   }
 
   async resume(prompt: string, sessionFile: string, options: AgentRunOptions = {}): Promise<string> {
-    const customTools: ToolDefinition[] = [...this.baseTools, ...(options.tools ?? [])];
+    const customTools: ToolDefinition[] = this.applyToolBudget([...this.baseTools, ...(options.tools ?? [])], options.toolBudget);
     const agentDir = getAgentDir();
     const sessionManager = SessionManager.open(sessionFile, undefined, this.cwd);
     const model = this.resolveModel(options.model);
@@ -137,6 +144,27 @@ export class WorkflowAgent {
       removeAbortListener?.();
       session.dispose();
     }
+  }
+
+  private applyToolBudget(tools: ToolDefinition[], budget: AgentToolBudget | undefined): ToolDefinition[] {
+    if (!budget) return tools;
+    let count = 0;
+    const block = budget.block ?? "*";
+    const shouldBlock = (name: string) => block === "*" || block.includes(name);
+    return tools.map((tool) => ({
+      ...tool,
+      async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
+        count++;
+        if (count > budget.hard && shouldBlock(tool.name)) {
+          return {
+            content: [{ type: "text", text: `Tool budget exceeded after ${budget.hard} tool call(s); blocked ${tool.name}.` }],
+            isError: true,
+            details: { toolBudgetExceeded: true, tool: tool.name, count, hard: budget.hard },
+          };
+        }
+        return tool.execute(toolCallId, params, signal, onUpdate, ctx);
+      },
+    })) as ToolDefinition[];
   }
 
   private resolveModel(spec: string | undefined): Model<Api> | undefined {
