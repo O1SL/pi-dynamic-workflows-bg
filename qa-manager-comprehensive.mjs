@@ -1,4 +1,5 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBackgroundWorkflowManager } from './dist/src/index.js';
@@ -48,6 +49,10 @@ assert(success.status === 'completed', `success status ${success.status}`);
 assert(manager.listActiveWork().every((item) => item.id !== success.id), 'completed run still active');
 const successResult = JSON.parse(await readFile(success.resultPath, 'utf8'));
 assert(successResult.result === 'mock success:hello', 'success result artifact mismatch');
+const successEvents = await readFile(success.eventsPath, 'utf8');
+if (!successEvents.includes('workflow.started') || !successEvents.includes('workflow.completed') || !successEvents.includes('workflow.agent.started')) {
+  throw new Error(`events artifact missing lifecycle events: ${successEvents}`);
+}
 
 // 2. Script failure path preserves artifacts and notifies model-visible layer.
 const failScript = `export const meta = { name: 'failure_case', description: 'failure case' }
@@ -123,6 +128,30 @@ assert(c1.status === 'completed' && c2.status === 'completed', 'concurrent wait 
 assert(notifications.length >= 6, `expected >=6 notifications, got ${notifications.length}`);
 assert(notifications.some((n) => n.status === 'failed'), 'no failed notification');
 assert(notifications.some((n) => n.status === 'cancelled'), 'no cancelled notification');
+
+// 7. Restore historical runs and convert stale running records to interrupted.
+const restoredManager = makeManager(tmp, []);
+assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
+const staleDir = join(tmp, '20990101000000-stale-case');
+await mkdir(staleDir, { recursive: true });
+await writeFile(join(staleDir, 'status.json'), JSON.stringify({
+  id: '20990101000000-stale-case',
+  name: 'stale_case',
+  description: 'stale running case',
+  status: 'running',
+  cwd: process.cwd(),
+  startedAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  artifactDir: staleDir,
+  outputPath: join(staleDir, 'output.md'),
+  resultPath: join(staleDir, 'result.json'),
+  statusPath: join(staleDir, 'status.json'),
+  eventsPath: join(staleDir, 'events.jsonl'),
+  snapshot: { name: 'stale_case', description: 'stale running case', phases: [], logs: [], agents: [], agentCount: 0, runningCount: 0, doneCount: 0, errorCount: 0 },
+}, null, 2));
+const restoredWithStale = makeManager(tmp, []);
+assert(restoredWithStale.get('20990101000000-stale-case')?.status === 'interrupted', 'stale running run not marked interrupted');
+assert(existsSync(join(staleDir, 'events.jsonl')), 'interrupted restore did not write events.jsonl');
 
 console.log(JSON.stringify({
   ok: true,

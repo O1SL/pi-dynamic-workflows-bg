@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
@@ -13,7 +13,7 @@ import {
 } from "./display.js";
 import { parseWorkflowScript, runWorkflow, type WorkflowMeta, type WorkflowRunResult } from "./workflow.js";
 
-export type BackgroundWorkflowStatus = "running" | "completed" | "failed" | "cancelled";
+export type BackgroundWorkflowStatus = "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
 export interface BackgroundWorkflowRun {
   id: string;
@@ -29,9 +29,12 @@ export interface BackgroundWorkflowRun {
   outputPath: string;
   resultPath: string;
   statusPath: string;
+  eventsPath: string;
   snapshot: WorkflowSnapshot;
   result?: WorkflowRunResult;
   error?: string;
+  notified?: boolean;
+  restored?: boolean;
   controller: AbortController;
   settled: Promise<void>;
 }
@@ -47,6 +50,8 @@ export interface BackgroundWorkflowStartOptions extends WorkflowAgentOptions {
 
 export interface BackgroundWorkflowManagerOptions {
   runsRoot?: string;
+  restore?: boolean;
+  maxNotificationChars?: number;
   notify?: (message: string, run: BackgroundWorkflowRun) => void | Promise<void>;
 }
 
@@ -67,11 +72,28 @@ function defaultRunsRoot(): string {
   return join(agentDir, "background-workflows", "runs");
 }
 
+const DEFAULT_MAX_NOTIFICATION_CHARS = 24_000;
+
+type WorkflowEvent = Record<string, unknown> & { type: string; ts: string };
+
 export function createBackgroundWorkflowManager(
   options: BackgroundWorkflowManagerOptions = {},
 ): BackgroundWorkflowManager {
   const runs = new Map<string, BackgroundWorkflowRun>();
   const runsRoot = options.runsRoot ?? defaultRunsRoot();
+  const maxNotificationChars = options.maxNotificationChars ?? DEFAULT_MAX_NOTIFICATION_CHARS;
+
+  const eventLine = (event: Omit<WorkflowEvent, "ts">) => `${JSON.stringify({ ...event, ts: new Date().toISOString() })}\n`;
+
+  const appendEvent = async (run: BackgroundWorkflowRun, event: Omit<WorkflowEvent, "ts">) => {
+    await mkdir(run.artifactDir, { recursive: true });
+    await appendFile(run.eventsPath, eventLine(event), "utf8");
+  };
+
+  const appendEventSync = (run: BackgroundWorkflowRun, event: Omit<WorkflowEvent, "ts">) => {
+    mkdirSync(run.artifactDir, { recursive: true });
+    appendFileSync(run.eventsPath, eventLine(event), "utf8");
+  };
 
   const persist = async (run: BackgroundWorkflowRun) => {
     await mkdir(run.artifactDir, { recursive: true });
@@ -91,6 +113,57 @@ export function createBackgroundWorkflowManager(
     run.snapshot = recomputeWorkflowSnapshot(run.snapshot);
     void persist(run).catch(() => undefined);
   };
+
+  const restoreRuns = () => {
+    if (options.restore === false || !existsSync(runsRoot)) return;
+    for (const entry of readdirSync(runsRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const statusPath = join(runsRoot, entry.name, "status.json");
+      if (!existsSync(statusPath)) continue;
+      try {
+        const raw = JSON.parse(readFileSync(statusPath, "utf8")) as Partial<BackgroundWorkflowRun>;
+        if (!raw.id || !raw.name || !raw.status || !raw.artifactDir || !raw.statusPath) continue;
+        let resolveSettled!: () => void;
+        const settled = new Promise<void>((resolve) => {
+          resolveSettled = resolve;
+        });
+        const status: BackgroundWorkflowStatus = raw.status === "running" ? "interrupted" : raw.status;
+        const restored: BackgroundWorkflowRun = {
+          id: raw.id,
+          name: raw.name,
+          description: raw.description ?? raw.name,
+          status,
+          cwd: raw.cwd ?? process.cwd(),
+          ...(raw.sessionId ? { sessionId: raw.sessionId } : {}),
+          startedAt: raw.startedAt ?? new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          ...(raw.completedAt ? { completedAt: raw.completedAt } : status === "interrupted" ? { completedAt: new Date().toISOString() } : {}),
+          artifactDir: raw.artifactDir,
+          outputPath: raw.outputPath ?? join(raw.artifactDir, "output.md"),
+          resultPath: raw.resultPath ?? join(raw.artifactDir, "result.json"),
+          statusPath: raw.statusPath,
+          eventsPath: raw.eventsPath ?? join(raw.artifactDir, "events.jsonl"),
+          snapshot: raw.snapshot ?? createWorkflowSnapshot({ name: raw.name, description: raw.description ?? raw.name }),
+          ...(raw.result ? { result: raw.result as WorkflowRunResult } : {}),
+          ...(raw.error ? { error: raw.error } : status === "interrupted" ? { error: "Workflow was interrupted by process shutdown or reload." } : {}),
+          notified: raw.notified ?? true,
+          restored: true,
+          controller: new AbortController(),
+          settled,
+        };
+        resolveSettled();
+        runs.set(restored.id, restored);
+        if (raw.status === "running") {
+          appendEventSync(restored, { type: "workflow.interrupted", id: restored.id });
+          void persist(restored).catch(() => undefined);
+        }
+      } catch {
+        // Ignore malformed historical run records.
+      }
+    }
+  };
+
+  restoreRuns();
 
   const start = async (startOptions: BackgroundWorkflowStartOptions): Promise<BackgroundWorkflowRun> => {
     const script = startOptions.script.trim();
@@ -114,12 +187,14 @@ export function createBackgroundWorkflowManager(
       outputPath: join(artifactDir, "output.md"),
       resultPath: join(artifactDir, "result.json"),
       statusPath: join(artifactDir, "status.json"),
+      eventsPath: join(artifactDir, "events.jsonl"),
       snapshot: createWorkflowSnapshot(parsed.meta),
       controller: new AbortController(),
       settled,
     };
     runs.set(id, run);
     await persist(run);
+    await appendEvent(run, { type: "workflow.started", id: run.id, name: run.name, cwd: run.cwd });
 
     void (async () => {
       try {
@@ -132,15 +207,18 @@ export function createBackgroundWorkflowManager(
           session: startOptions.session,
           onLog(message) {
             run.snapshot.logs.push(message);
+            void appendEvent(run, { type: "workflow.log", message }).catch(() => undefined);
             update(run);
           },
           onPhase(title) {
             run.snapshot.currentPhase = title;
             if (!run.snapshot.phases.includes(title)) run.snapshot.phases.push(title);
+            void appendEvent(run, { type: "workflow.phase", title }).catch(() => undefined);
             update(run);
           },
           onAgentStart(event) {
             if (!run.snapshot.phases.includes(event.phase ?? "") && event.phase) run.snapshot.phases.push(event.phase);
+            void appendEvent(run, { type: "workflow.agent.started", label: event.label, phase: event.phase, prompt: event.prompt }).catch(() => undefined);
             run.snapshot.agents.push({
               id: run.snapshot.agents.length + 1,
               label: event.label,
@@ -158,6 +236,7 @@ export function createBackgroundWorkflowManager(
               agent.status = event.result === null ? "error" : "done";
               agent.resultPreview = preview(event.result);
             }
+            void appendEvent(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result) }).catch(() => undefined);
             update(run);
           },
         });
@@ -170,9 +249,11 @@ export function createBackgroundWorkflowManager(
         run.status = "completed";
         run.snapshot.result = result.result;
         run.snapshot.durationMs = result.durationMs;
+        void appendEvent(run, { type: "workflow.completed", id: run.id }).catch(() => undefined);
       } catch (error) {
         run.status = run.controller.signal.aborted ? "cancelled" : "failed";
         run.error = error instanceof Error ? error.message : String(error);
+        void appendEvent(run, { type: run.status === "cancelled" ? "workflow.cancelled" : "workflow.failed", id: run.id, error: run.error }).catch(() => undefined);
         for (const agent of run.snapshot.agents) {
           if (agent.status === "running") {
             agent.status = run.status === "cancelled" ? "skipped" : "error";
@@ -185,7 +266,11 @@ export function createBackgroundWorkflowManager(
         await writeResultArtifacts(run).catch(() => undefined);
         await persist(run).catch(() => undefined);
         try {
-          await options.notify?.(formatRunResult(run), run);
+          if (!run.notified) {
+            await options.notify?.(formatNotification(run, maxNotificationChars), run);
+            run.notified = true;
+            await persist(run).catch(() => undefined);
+          }
         } catch {
           // Completion notification is best-effort. Artifacts and status remain available.
         } finally {
@@ -289,6 +374,24 @@ export function formatRunResult(run: BackgroundWorkflowRun): string {
   if (run.error) lines.push("", `Error: ${run.error}`);
   if (run.result) lines.push("", "Result:", "```json", JSON.stringify(run.result.result, null, 2), "```");
   return lines.join("\n");
+}
+
+export function formatNotification(run: BackgroundWorkflowRun, maxChars = DEFAULT_MAX_NOTIFICATION_CHARS): string {
+  const full = formatRunResult(run);
+  if (full.length <= maxChars) return full;
+  const omitted = full.length - maxChars;
+  return [
+    `Background workflow ${run.status}: ${run.name}`,
+    "",
+    `Run ID: ${run.id}`,
+    `Artifacts: ${run.artifactDir}`,
+    `Output: ${run.outputPath}`,
+    `Result: ${run.resultPath}`,
+    "",
+    renderWorkflowText(run.snapshot, run.status !== "running", { maxAgents: 12, maxLogs: 3 }),
+    "",
+    `Notification truncated by ${omitted} characters. Read the full result from output.md or call workflow_result with id ${run.id}.`,
+  ].join("\n");
 }
 
 function makeRunId(meta: WorkflowMeta, runsRoot: string, existingRuns?: Map<string, BackgroundWorkflowRun>): string {
