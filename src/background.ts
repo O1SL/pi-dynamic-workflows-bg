@@ -452,10 +452,15 @@ export function createBackgroundWorkflowManager(
       if (!run.notified && settledResolvers.has(run.id)) await run.settled;
       return run;
     }
+    let timeoutTimer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`Timed out waiting for background workflow ${run.id}.`)), timeoutMs);
+      timeoutTimer = setTimeout(() => reject(new Error(`Timed out waiting for background workflow ${run.id}.`)), timeoutMs);
     });
-    await Promise.race([run.settled, timeout]);
+    try {
+      await Promise.race([run.settled, timeout]);
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    }
     return run;
   };
 
@@ -469,12 +474,18 @@ export function createBackgroundWorkflowManager(
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error(`Timed out waiting for ${active.length} background workflow(s) to finish.`);
+      let tickTimer: NodeJS.Timeout | undefined;
       await Promise.race([
         Promise.allSettled(active.map((run) => run.settled)),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("wait timeout")), Math.min(remaining, 1000))),
+        new Promise((_, reject) => {
+          tickTimer = setTimeout(() => reject(new Error("wait timeout")), Math.min(remaining, 1000));
+        }),
       ]).catch((error) => {
+        if (tickTimer) clearTimeout(tickTimer);
         if (error instanceof Error && error.message === "wait timeout") return;
         throw error;
+      }).finally(() => {
+        if (tickTimer) clearTimeout(tickTimer);
       });
     }
   };
