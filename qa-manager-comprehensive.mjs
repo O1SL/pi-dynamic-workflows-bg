@@ -142,7 +142,39 @@ assert(c1.id !== c2.id, 'concurrent ids collided');
 await manager.waitForIdle('session-e', 2000);
 assert(c1.status === 'completed' && c2.status === 'completed', 'concurrent wait did not complete both');
 
-// 6. Notification coverage: success/fail/no-agent/cancel/concurrent x2 with batching.
+// 6. Session-scoped waitForIdle waits target-session runs without waiting for unrelated sessions.
+const waitScopedScript = `export const meta = { name: 'wait_scoped_case', description: 'wait scoped case' }
+const result = await agent('wait', { label: 'wait child' })
+return { result }
+`;
+const scopedTarget = await manager.start({
+  script: waitScopedScript,
+  sessionId: 'session-wait-target',
+  agent: { async run() { await new Promise((resolve) => setTimeout(resolve, 80)); return 'target-done'; } },
+});
+let unrelatedAbortObserved = false;
+const scopedOther = await manager.start({
+  script: waitScopedScript,
+  sessionId: 'session-wait-other',
+  agent: {
+    async run(_prompt, opts) {
+      await new Promise((resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => {
+          unrelatedAbortObserved = true;
+          reject(new Error('unrelated aborted'));
+        }, { once: true });
+      });
+    },
+  },
+});
+await manager.waitForIdle('session-wait-target', 2000);
+assert(scopedTarget.status === 'completed', `target scoped wait status ${scopedTarget.status}`);
+assert(scopedOther.status === 'running', 'session-scoped wait should not wait unrelated session');
+assert(manager.cancel(scopedOther.id), 'failed to cancel unrelated scoped run');
+await manager.waitForRun(scopedOther.id, 2000);
+assert(unrelatedAbortObserved && scopedOther.status === 'cancelled', 'unrelated scoped run did not cancel cleanly');
+
+// 7. Notification coverage: success/fail/no-agent/cancel/concurrent x2 with batching.
 const notifiedRunCount = notifications.reduce((total, n) => total + (n.count ?? 1), 0);
 assert(notifiedRunCount >= 6, `expected >=6 notified runs, got ${notifiedRunCount} across ${notifications.length} notification(s)`);
 assert(notifications.some((n) => n.status === 'failed'), 'no failed notification');

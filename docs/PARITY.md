@@ -34,7 +34,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Live steer running child | Implemented (experimental) | `workflow_steer` sends a steering message to a currently running child session when the live session handle is still available in the current process. |
 | Provider error propagation | Implemented | Child assistant messages ending with provider/tool errors now fail the workflow instead of returning empty text. |
 | CI | Implemented | GitHub Actions runs `npm ci`, `npm run qa:full`, and `npm pack --dry-run`. |
-| Local QA | Implemented | `qa:full` covers manager, extension, batching, recovery, lazy disk run lookup, ambiguous prefix diagnostics, artifact pruning and prune input validation, atomic write cleanup, live-owner reconciliation, session identity consistency, artifacts, transcript, wait, cancel, failure, token budget, etc. |
+| Local QA | Implemented | `qa:full` covers manager, extension, batching, recovery, lazy disk run lookup, ambiguous prefix diagnostics, artifact pruning and prune input validation, atomic write cleanup, live-owner reconciliation, session identity consistency, session-scoped waitForIdle behavior, artifacts, transcript, wait, cancel, failure, token budget, etc. |
 | Real Pi E2E | Partially implemented | Verified background completion, failure, foreground mode, `workflow_wait`, `workflow_transcript`, and `workflow_resume` on installed package. |
 
 ## Best-effort / partial
