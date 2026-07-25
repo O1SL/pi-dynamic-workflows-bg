@@ -307,6 +307,22 @@ export function createBackgroundWorkflowManager(
             });
             update(run);
           },
+          onAgentToolBudget(event) {
+            const agent = [...run.snapshot.agents]
+              .reverse()
+              .find((item) => item.label === event.label && item.status === "running");
+            if (agent) {
+              agent.toolBudget = {
+                count: event.count,
+                hard: event.hard,
+                ...(event.soft !== undefined ? { soft: event.soft } : {}),
+                ...(event.type === "soft" ? { softReached: true } : agent.toolBudget?.softReached ? { softReached: true } : {}),
+                ...(event.type === "hard" ? { hardExceeded: true, tool: event.tool } : agent.toolBudget?.hardExceeded ? { hardExceeded: true, tool: agent.toolBudget.tool } : {}),
+              };
+            }
+            appendEventSync(run, { type: "workflow.agent.tool_budget", label: event.label, phase: event.phase, budgetEvent: event.type, tool: event.tool, count: event.count, hard: event.hard, soft: event.soft });
+            update(run);
+          },
           onAgentAttempt(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
@@ -561,6 +577,7 @@ export function formatRunSummary(run: BackgroundWorkflowRun): string {
   const sessionAgents = run.snapshot.agents.filter((agent) => agent.sessionFile);
   const worktreeAgents = run.snapshot.agents.filter((agent) => agent.worktreePath);
   const attemptAgents = run.snapshot.agents.filter((agent) => agent.attempts?.length);
+  const budgetAgents = run.snapshot.agents.filter((agent) => agent.toolBudget);
   const nextActions: string[] = [];
   if (run.status === "running") nextActions.push(`Use workflow_wait with id ${run.id} to wait for completion, or workflow_cancel to stop it.`);
   if (run.status === "failed") nextActions.push(`Use workflow_events ${run.id} and workflow_transcript ${run.id} to inspect the failure.`);
@@ -588,6 +605,7 @@ export function formatRunSummary(run: BackgroundWorkflowRun): string {
     ...(sessionAgents.length ? [`Child sessions: ${sessionAgents.map((agent) => `#${agent.id} ${agent.label} -> ${agent.sessionFile}`).join("; ")}`] : []),
     ...(worktreeAgents.length ? [`Worktrees: ${worktreeAgents.map((agent) => `#${agent.id} ${agent.label} -> ${agent.worktreePath}`).join("; ")}`] : []),
     ...(attemptAgents.length ? [`Model attempts: ${attemptAgents.map((agent) => `#${agent.id} ${agent.label}: ${agent.attempts?.map((attempt) => `${attempt.model ?? "default"}:${attempt.status}`).join(" -> ")}`).join("; ")}`] : []),
+    ...(budgetAgents.length ? [`Tool budgets: ${budgetAgents.map((agent) => `#${agent.id} ${agent.label}: ${agent.toolBudget?.count}/${agent.toolBudget?.hard}${agent.toolBudget?.softReached ? " soft" : ""}${agent.toolBudget?.hardExceeded ? ` hard(${agent.toolBudget.tool})` : ""}`).join("; ")}`] : []),
     ...(run.error ? [`Error: ${run.error}`] : []),
     ...(run.result ? ["", "Result preview:", JSON.stringify(run.result.result, null, 2).slice(0, 4000)] : []),
     "",

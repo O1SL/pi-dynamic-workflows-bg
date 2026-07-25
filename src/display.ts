@@ -14,6 +14,7 @@ export interface WorkflowAgentSnapshot {
   sessionFile?: string;
   worktreePath?: string;
   attempts?: Array<{ model?: string; status: "failed" | "succeeded"; error?: string }>;
+  toolBudget?: { count: number; softReached?: boolean; hardExceeded?: boolean; tool?: string; hard?: number; soft?: number };
 }
 
 export interface WorkflowSnapshot {

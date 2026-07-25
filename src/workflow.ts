@@ -7,6 +7,7 @@ import type { Node } from "acorn";
 import { parse } from "acorn";
 import type { TSchema } from "typebox";
 import { WorkflowAgent, type AgentToolBudget, type AgentTurnBudget, type WorkflowAgentOptions } from "./agent.js";
+import type { ToolBudgetEvent } from "./tool-budget.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +37,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onAgentSession?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
   onAgentWorktree?: (event: { label: string; phase?: string; worktreePath: string }) => void;
   onAgentAttempt?: (event: { label: string; phase?: string; model?: string; status: "failed" | "succeeded"; error?: string }) => void;
+  onAgentToolBudget?: (event: { label: string; phase?: string } & ToolBudgetEvent) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -144,6 +146,7 @@ export async function runWorkflow<T = unknown>(
               model,
               toolBudget: normalizedOptions.toolBudget,
               turnBudget: normalizedOptions.turnBudget,
+              onToolBudgetEvent: (event: ToolBudgetEvent) => options.onAgentToolBudget?.({ label, phase: assignedPhase, ...event }),
               instructions: buildAgentInstructions(assignedPhase, { ...normalizedOptions, model }),
               onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
             } as any);

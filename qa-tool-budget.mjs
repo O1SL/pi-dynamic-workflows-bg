@@ -13,7 +13,8 @@ const baseTool = {
 };
 
 const state = { count: 0, softNotified: false };
-const [tool] = applyToolBudgetToTools([baseTool], { soft: 2, hard: 3, block: '*' }, state);
+const events = [];
+const [tool] = applyToolBudgetToTools([baseTool], { soft: 2, hard: 3, block: '*' }, state, (event) => events.push(event));
 
 const r1 = await tool.execute('1', {}, undefined, undefined, {});
 if (r1.isError) throw new Error('first call unexpectedly failed');
@@ -29,10 +30,11 @@ if (r3.isError) throw new Error('hard limit should allow third call when hard=3'
 const r4 = await tool.execute('4', {}, undefined, undefined, {});
 if (!r4.isError || !r4.details?.toolBudgetExceeded) throw new Error('hard budget block missing');
 if (calls.length !== 3) throw new Error(`base tool should have run three times, ran ${calls.length}`);
+if (!events.some((event) => event.type === 'soft') || !events.some((event) => event.type === 'hard')) throw new Error(`budget events missing: ${JSON.stringify(events)}`);
 
 const [bashTool] = applyToolBudgetToTools([{ ...baseTool, name: 'bash' }], { hard: 1, block: ['read'] });
 await bashTool.execute('a', {}, undefined, undefined, {});
 const bashSecond = await bashTool.execute('b', {}, undefined, undefined, {});
 if (bashSecond.isError) throw new Error('block list should not block bash when only read is configured');
 
-console.log(JSON.stringify({ ok: true, calls, state }, null, 2));
+console.log(JSON.stringify({ ok: true, calls, state, events }, null, 2));

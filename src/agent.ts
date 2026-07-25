@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 import { createStructuredOutputTool, type StructuredOutputCapture } from "./structured-output.js";
-import { applyToolBudgetToTools, type AgentToolBudget } from "./tool-budget.js";
+import { applyToolBudgetToTools, type AgentToolBudget, type ToolBudgetEvent } from "./tool-budget.js";
 
 export interface WorkflowAgentOptions {
   cwd?: string;
@@ -41,6 +41,7 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   model?: string;
   toolBudget?: AgentToolBudget;
   turnBudget?: AgentTurnBudget;
+  onToolBudgetEvent?: (event: ToolBudgetEvent) => void;
 }
 
 export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef extends TSchema
@@ -67,7 +68,7 @@ export class WorkflowAgent {
     options: AgentRunOptions<TSchemaDef> = {},
   ): Promise<AgentRunResult<TSchemaDef>> {
     const capture: StructuredOutputCapture<any> = { called: false, value: undefined };
-    const customTools: ToolDefinition[] = applyToolBudgetToTools([...this.baseTools, ...(options.tools ?? [])], options.toolBudget);
+    const customTools: ToolDefinition[] = applyToolBudgetToTools([...this.baseTools, ...(options.tools ?? [])], options.toolBudget, undefined, options.onToolBudgetEvent);
 
     if (options.schema) {
       customTools.push(createStructuredOutputTool({ schema: options.schema, capture }) as unknown as ToolDefinition);
@@ -120,7 +121,7 @@ export class WorkflowAgent {
   }
 
   async resume(prompt: string, sessionFile: string, options: AgentRunOptions = {}): Promise<string> {
-    const customTools: ToolDefinition[] = applyToolBudgetToTools([...this.baseTools, ...(options.tools ?? [])], options.toolBudget);
+    const customTools: ToolDefinition[] = applyToolBudgetToTools([...this.baseTools, ...(options.tools ?? [])], options.toolBudget, undefined, options.onToolBudgetEvent);
     const agentDir = getAgentDir();
     const sessionManager = SessionManager.open(sessionFile, undefined, this.cwd);
     const model = this.resolveModel(options.model);
