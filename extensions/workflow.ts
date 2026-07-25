@@ -134,6 +134,36 @@ export default function extension(pi: ExtensionAPI) {
   }));
 
   pi.registerTool(defineTool({
+    name: "workflow_worktrees",
+    label: "Workflow Worktrees",
+    description: "List git worktrees created by workflow child agents.",
+    parameters: Type.Object({ id: Type.Optional(Type.String({ description: "Optional run id or prefix." })) }),
+    async execute(_id, params) {
+      const items = manager.listWorktrees(params.id);
+      const text = items.length === 0
+        ? "No workflow worktrees found."
+        : ["Workflow worktrees:", ...items.map((item) => `- ${item.runId} #${item.agentId} ${item.label}: ${item.path} (${item.exists ? "exists" : "missing"})`)].join("\n");
+      return { content: [{ type: "text", text }], details: { action: "worktrees", id: params.id, items } };
+    },
+  }));
+
+  pi.registerTool(defineTool({
+    name: "workflow_worktree_cleanup",
+    label: "Workflow Worktree Cleanup",
+    description: "Remove git worktrees created by workflow child agents.",
+    parameters: Type.Object({ id: Type.Optional(Type.String({ description: "Optional run id or prefix." })) }),
+    async execute(_id, params) {
+      const result = await manager.cleanupWorktrees(params.id);
+      const text = [
+        `Removed ${result.removed.length} workflow worktree(s).`,
+        ...result.removed.map((path) => `- removed: ${path}`),
+        ...result.failed.map((failure) => `- failed: ${failure.path}: ${failure.error}`),
+      ].join("\n");
+      return { content: [{ type: "text", text }], details: { action: "worktree_cleanup", id: params.id, ...result } };
+    },
+  }));
+
+  pi.registerTool(defineTool({
     name: "workflow_resume",
     label: "Workflow Resume",
     description: "Resume a persisted child agent session from a background workflow with a follow-up prompt. Experimental revive-style capability.",
@@ -223,6 +253,24 @@ export default function extension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-worktrees", {
+    description: "List workflow-created git worktrees. Usage: /workflow-worktrees [run-id-prefix]",
+    handler: async (args, ctx) => {
+      const items = manager.listWorktrees(args.trim() || undefined);
+      ctx.ui.notify(items.length === 0
+        ? "No workflow worktrees found."
+        : ["Workflow worktrees:", ...items.map((item) => `- ${item.runId} #${item.agentId} ${item.label}: ${item.path} (${item.exists ? "exists" : "missing"})`)].join("\n"), "info");
+    },
+  });
+
+  pi.registerCommand("workflow-worktree-cleanup", {
+    description: "Remove workflow-created git worktrees. Usage: /workflow-worktree-cleanup [run-id-prefix]",
+    handler: async (args, ctx) => {
+      const result = await manager.cleanupWorktrees(args.trim() || undefined);
+      ctx.ui.notify(`Removed ${result.removed.length} workflow worktree(s).${result.failed.length ? ` Failed: ${result.failed.length}` : ""}`, result.failed.length ? "warning" : "info");
+    },
+  });
+
   pi.registerCommand("workflow-resume", {
     description: "Resume a child session. Usage: /workflow-resume <run-id-prefix> -- <follow-up prompt>",
     handler: async (args, ctx) => {
@@ -255,7 +303,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_transcript", "workflow_resume", "workflow_cancel", "workflow_wait"];
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_transcript", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_resume", "workflow_cancel", "workflow_wait"];
     const next = [...active];
     for (const tool of requiredTools) {
       if (!next.includes(tool)) next.push(tool);

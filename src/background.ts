@@ -1,7 +1,9 @@
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import type { CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import { WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
 import {
@@ -12,6 +14,8 @@ import {
   type WorkflowSnapshot,
 } from "./display.js";
 import { parseWorkflowScript, runWorkflow, type WorkflowMeta, type WorkflowRunResult } from "./workflow.js";
+
+const execFileAsync = promisify(execFile);
 
 export type BackgroundWorkflowStatus = "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
@@ -68,6 +72,8 @@ export interface BackgroundWorkflowManager {
   waitForRun(idOrPrefix: string, timeoutMs?: number): Promise<BackgroundWorkflowRun | undefined>;
   waitForIdle(sessionId?: string, timeoutMs?: number): Promise<void>;
   resumeChild(idOrPrefix: string, prompt: string, selector?: string | number): Promise<string>;
+  listWorktrees(idOrPrefix?: string): Array<{ runId: string; agentId: number; label: string; path: string; exists: boolean }>;
+  cleanupWorktrees(idOrPrefix?: string): Promise<{ removed: string[]; failed: Array<{ path: string; error: string }> }>;
   formatStatus(idOrPrefix?: string): string;
   formatResult(idOrPrefix: string): string;
   formatTranscript(idOrPrefix: string, selector?: string | number, lines?: number): string;
@@ -423,6 +429,39 @@ export function createBackgroundWorkflowManager(
     return result;
   };
 
+  const listWorktrees = (idOrPrefix?: string) => {
+    const sourceRuns = idOrPrefix?.trim() ? (get(idOrPrefix.trim()) ? [get(idOrPrefix.trim())!] : []) : list();
+    return sourceRuns.flatMap((run) => run.snapshot.agents
+      .filter((agent) => agent.worktreePath)
+      .map((agent) => ({
+        runId: run.id,
+        agentId: agent.id,
+        label: agent.label,
+        path: agent.worktreePath!,
+        exists: existsSync(agent.worktreePath!),
+      })));
+  };
+
+  const cleanupWorktrees = async (idOrPrefix?: string) => {
+    const removed: string[] = [];
+    const failed: Array<{ path: string; error: string }> = [];
+    for (const item of listWorktrees(idOrPrefix)) {
+      if (!item.exists) continue;
+      try {
+        await execFileAsync("git", ["worktree", "remove", "--force", item.path]);
+      } catch (error) {
+        try {
+          await rm(item.path, { recursive: true, force: true });
+        } catch (rmError) {
+          failed.push({ path: item.path, error: rmError instanceof Error ? rmError.message : String(rmError) });
+          continue;
+        }
+      }
+      removed.push(item.path);
+    }
+    return { removed, failed };
+  };
+
   const formatStatus = (idOrPrefix?: string) => {
     if (idOrPrefix?.trim()) {
       const run = get(idOrPrefix.trim());
@@ -446,7 +485,7 @@ export function createBackgroundWorkflowManager(
     return formatRunTranscript(run, selector, lines);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, formatStatus, formatResult, formatTranscript };
+  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, listWorktrees, cleanupWorktrees, formatStatus, formatResult, formatTranscript };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {

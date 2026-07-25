@@ -294,6 +294,11 @@ const worktreePath = worktreeRun.snapshot.agents[0]?.worktreePath;
 assert(worktreePath && existsSync(worktreePath), `worktree path missing: ${worktreePath}`);
 const worktreeEvents = await readFile(worktreeRun.eventsPath, 'utf8');
 assert(worktreeEvents.includes('workflow.agent.worktree'), 'worktree event missing');
+const listedWorktrees = manager.listWorktrees(worktreeRun.id);
+assert(listedWorktrees.length === 1 && listedWorktrees[0].exists, 'listWorktrees did not report created worktree');
+const cleanup = await manager.cleanupWorktrees(worktreeRun.id);
+assert(cleanup.removed.length === 1 && cleanup.failed.length === 0, `cleanup failed: ${JSON.stringify(cleanup)}`);
+assert(!existsSync(worktreePath), 'worktree still exists after cleanup');
 
 // 14. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
