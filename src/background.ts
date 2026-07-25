@@ -69,6 +69,7 @@ export interface BackgroundWorkflowManager {
   waitForIdle(sessionId?: string, timeoutMs?: number): Promise<void>;
   formatStatus(idOrPrefix?: string): string;
   formatResult(idOrPrefix: string): string;
+  formatTranscript(idOrPrefix: string, selector?: string | number, lines?: number): string;
 }
 
 function defaultRunsRoot(): string {
@@ -419,7 +420,13 @@ export function createBackgroundWorkflowManager(
     return formatRunResult(run);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, formatStatus, formatResult };
+  const formatTranscript = (idOrPrefix: string, selector?: string | number, lines?: number) => {
+    const run = get(idOrPrefix.trim());
+    if (!run) return `No background workflow found for: ${idOrPrefix}`;
+    return formatRunTranscript(run, selector, lines);
+  };
+
+  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, formatStatus, formatResult, formatTranscript };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {
@@ -446,6 +453,71 @@ export function formatRunResult(run: BackgroundWorkflowRun): string {
   if (run.error) lines.push("", `Error: ${run.error}`);
   if (run.result) lines.push("", "Result:", "```json", JSON.stringify(run.result.result, null, 2), "```");
   return lines.join("\n");
+}
+
+export function formatRunTranscript(run: BackgroundWorkflowRun, selector?: string | number, lines = 80): string {
+  const agents = run.snapshot.agents.filter((agent) => agent.sessionFile);
+  if (agents.length === 0) return `Workflow ${run.id} has no persisted child session transcripts.`;
+  let agent = agents[0];
+  if (selector !== undefined) {
+    if (typeof selector === "number" || /^\d+$/.test(String(selector))) {
+      const index = Number(selector);
+      agent = agents[index - 1] ?? agents[index] ?? agent;
+    } else {
+      const text = String(selector).toLowerCase();
+      agent = agents.find((candidate) => candidate.label.toLowerCase().includes(text)) ?? agent;
+    }
+  }
+  if (!agent?.sessionFile) return `No child agent transcript matched selector: ${selector ?? "(first)"}`;
+  if (!existsSync(agent.sessionFile)) return `Child transcript file is missing: ${agent.sessionFile}`;
+  const entries = readFileSync(agent.sessionFile, "utf8")
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => {
+      try { return JSON.parse(line); } catch { return undefined; }
+    })
+    .filter(Boolean);
+  const rendered = entries.map(formatSessionEntryLine).filter(Boolean) as string[];
+  const limit = Math.max(1, Math.min(lines, 500));
+  const tail = rendered.slice(-limit);
+  return [
+    `Workflow transcript: ${run.id}`,
+    `Agent: #${agent.id} ${agent.label}`,
+    `Session file: ${agent.sessionFile}`,
+    `Showing ${tail.length}/${rendered.length} rendered entr${rendered.length === 1 ? "y" : "ies"}`,
+    "",
+    ...tail,
+  ].join("\n");
+}
+
+function formatSessionEntryLine(entry: any): string | undefined {
+  if (entry?.type !== "message") return undefined;
+  const message = entry.message;
+  const role = message?.role ?? "unknown";
+  if (role === "toolResult") {
+    return `[toolResult:${message.toolName ?? "tool"}] ${textFromContent(message.content)}`;
+  }
+  if (role === "assistant" && message?.errorMessage) {
+    return `[assistant:error] ${message.errorMessage}`;
+  }
+  return `[${role}] ${textFromContent(message?.content)}`;
+}
+
+function textFromContent(content: unknown): string {
+  if (typeof content === "string") return shortenLine(content);
+  if (!Array.isArray(content)) return "";
+  return shortenLine(content.map((part) => {
+    if (part?.type === "text") return part.text;
+    if (part?.type === "toolCall") return `<tool:${part.name}> ${JSON.stringify(part.arguments ?? {})}`;
+    if (part?.type === "thinking") return "<thinking>";
+    if (part?.type === "image") return "<image>";
+    return "";
+  }).filter(Boolean).join(" "));
+}
+
+function shortenLine(text: string, max = 1000): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
 }
 
 export function formatNotification(run: BackgroundWorkflowRun, maxChars = DEFAULT_MAX_NOTIFICATION_CHARS): string {

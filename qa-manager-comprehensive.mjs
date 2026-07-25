@@ -56,6 +56,15 @@ const successEvents = await readFile(success.eventsPath, 'utf8');
 if (!successEvents.includes('workflow.started') || !successEvents.includes('workflow.completed') || !successEvents.includes('workflow.agent.started')) {
   throw new Error(`events artifact missing lifecycle events: ${successEvents}`);
 }
+const fakeSessionFile = join(success.artifactDir, 'fake-child-session.jsonl');
+await writeFile(fakeSessionFile, [
+  JSON.stringify({ type: 'session', id: 'fake', version: 3, timestamp: new Date().toISOString(), cwd: process.cwd() }),
+  JSON.stringify({ type: 'message', id: 'u1', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: [{ type: 'text', text: 'hello child' }] } }),
+  JSON.stringify({ type: 'message', id: 'a1', parentId: 'u1', timestamp: new Date().toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: 'child transcript ok' }] } }),
+].join('\n') + '\n');
+success.snapshot.agents[0].sessionFile = fakeSessionFile;
+const transcript = manager.formatTranscript(success.id, 'mock success', 10);
+assert(transcript.includes('child transcript ok'), 'workflow transcript did not include child assistant text');
 
 // 2. Script failure path preserves artifacts and notifies model-visible layer.
 const failScript = `export const meta = { name: 'failure_case', description: 'failure case' }

@@ -120,6 +120,20 @@ export default function extension(pi: ExtensionAPI) {
   }));
 
   pi.registerTool(defineTool({
+    name: "workflow_transcript",
+    label: "Workflow Transcript",
+    description: "Read a persisted child agent transcript for a background workflow by run id/prefix.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Run id or prefix." }),
+      agent: Type.Optional(Type.String({ description: "Optional agent label substring or 1-based index." })),
+      lines: Type.Optional(Type.Number({ description: "Maximum rendered transcript lines. Default 80, max 500." })),
+    }),
+    async execute(_id, params) {
+      return { content: [{ type: "text", text: manager.formatTranscript(params.id, params.agent, params.lines) }], details: { action: "transcript", id: params.id, agent: params.agent, lines: params.lines } };
+    },
+  }));
+
+  pi.registerTool(defineTool({
     name: "workflow_cancel",
     label: "Workflow Cancel",
     description: "Cancel a running background workflow by id/prefix.",
@@ -178,6 +192,18 @@ export default function extension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-transcript", {
+    description: "Show a child transcript for a background workflow. Usage: /workflow-transcript <run-id-prefix> [agent-label-or-index]",
+    handler: async (args, ctx) => {
+      const [id, ...selectorParts] = args.trim().split(/\s+/).filter(Boolean);
+      if (!id) {
+        ctx.ui.notify("Usage: /workflow-transcript <run-id-prefix> [agent-label-or-index]", "error");
+        return;
+      }
+      ctx.ui.notify(manager.formatTranscript(id, selectorParts.join(" ") || undefined), "info");
+    },
+  });
+
   pi.registerCommand("workflow-cancel", {
     description: "Cancel a running background workflow. Usage: /workflow-cancel <run-id-prefix>",
     handler: async (args, ctx) => {
@@ -192,7 +218,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_cancel", "workflow_wait"];
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_transcript", "workflow_cancel", "workflow_wait"];
     const next = [...active];
     for (const tool of requiredTools) {
       if (!next.includes(tool)) next.push(tool);

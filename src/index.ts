@@ -6,7 +6,7 @@ export type {
   BackgroundWorkflowStartOptions,
   BackgroundWorkflowStatus,
 } from "./background.js";
-export { createBackgroundWorkflowManager, formatRunResult, formatRunStatus } from "./background.js";
+export { createBackgroundWorkflowManager, formatNotification, formatNotificationBatch, formatRunResult, formatRunStatus, formatRunTranscript } from "./background.js";
 export type {
   WorkflowAgentSnapshot,
   WorkflowAgentStatus,
