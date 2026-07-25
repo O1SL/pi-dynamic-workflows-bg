@@ -159,7 +159,23 @@ assert(smallNotifications[0].message.includes('Notification truncated'), 'large 
 const hugeOutput = await readFile(hugeRun.outputPath, 'utf8');
 assert(hugeOutput.includes('X'.repeat(1000)), 'full huge output artifact was not preserved');
 
-// 8. Restore historical runs and convert stale running records to interrupted.
+// 8. Token budget exhaustion fails before additional agent calls.
+const budgetScript = `export const meta = { name: 'budget_case', description: 'budget case' }
+await agent('first', { label: 'first' })
+await agent('second', { label: 'second' })
+return { ok: true }
+`;
+const budgetRun = await manager.start({
+  script: budgetScript,
+  sessionId: 'session-budget',
+  tokenBudget: 1,
+  agent: { async run(prompt) { return `large-result-${prompt}-${'Y'.repeat(100)}`; } },
+});
+await manager.waitForRun(budgetRun.id, 2000);
+assert(budgetRun.status === 'failed', `budget run status ${budgetRun.status}`);
+assert(String(budgetRun.error).includes('token budget exhausted'), `budget error mismatch: ${budgetRun.error}`);
+
+// 9. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');

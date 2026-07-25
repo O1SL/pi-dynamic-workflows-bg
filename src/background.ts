@@ -45,6 +45,7 @@ export interface BackgroundWorkflowStartOptions extends WorkflowAgentOptions {
   args?: unknown;
   agent?: Pick<WorkflowAgent, "run">;
   concurrency?: number;
+  tokenBudget?: number | null;
   session?: Partial<CreateAgentSessionOptions>;
   sessionId?: string;
 }
@@ -268,6 +269,7 @@ export function createBackgroundWorkflowManager(
           cwd: run.cwd,
           args: startOptions.args,
           concurrency: startOptions.concurrency,
+          tokenBudget: startOptions.tokenBudget,
           signal: run.controller.signal,
           agent: startOptions.agent,
           session: startOptions.session,

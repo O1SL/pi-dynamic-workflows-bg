@@ -30,12 +30,16 @@ const workflowToolSchema = Type.Object({
         "If true, wait for the workflow to finish and return the result inline. Default is false: start a background workflow and return immediately.",
     }),
   ),
+  concurrency: Type.Optional(Type.Number({ description: "Maximum concurrent agent() calls. Defaults to runtime heuristic." })),
+  tokenBudget: Type.Optional(Type.Number({ description: "Approximate workflow output token budget. When exhausted, further agent() calls fail." })),
 });
 
 export type WorkflowToolInput = {
   script: string;
   args?: unknown;
   foreground?: boolean;
+  concurrency?: number;
+  tokenBudget?: number;
 };
 
 const workflowDisplayOptions = {
@@ -94,7 +98,8 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           script,
           args: params.args,
           cwd: options.cwd ?? ctx.cwd,
-          concurrency: options.concurrency,
+          concurrency: params.concurrency ?? options.concurrency,
+          tokenBudget: params.tokenBudget,
           sessionId: ctx.sessionManager
             ? (ctx.sessionManager.getSessionFile?.() ?? ctx.sessionManager.getSessionId?.())
             : undefined,
@@ -145,7 +150,8 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           cwd: options.cwd ?? ctx.cwd,
           args: params.args,
           signal,
-          concurrency: options.concurrency,
+          concurrency: params.concurrency ?? options.concurrency,
+          tokenBudget: params.tokenBudget,
           session: {
             modelRegistry: ctx.modelRegistry,
             model: ctx.model,
