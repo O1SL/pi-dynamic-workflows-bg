@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
-import type { WorkflowAgent, WorkflowAgentOptions } from "./agent.js";
+import { WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
 import {
   createWorkflowSnapshot,
   preview,
@@ -67,6 +67,7 @@ export interface BackgroundWorkflowManager {
   cancel(idOrPrefix: string): boolean;
   waitForRun(idOrPrefix: string, timeoutMs?: number): Promise<BackgroundWorkflowRun | undefined>;
   waitForIdle(sessionId?: string, timeoutMs?: number): Promise<void>;
+  resumeChild(idOrPrefix: string, prompt: string, selector?: string | number): Promise<string>;
   formatStatus(idOrPrefix?: string): string;
   formatResult(idOrPrefix: string): string;
   formatTranscript(idOrPrefix: string, selector?: string | number, lines?: number): string;
@@ -403,6 +404,17 @@ export function createBackgroundWorkflowManager(
     }
   };
 
+  const resumeChild = async (idOrPrefix: string, prompt: string, selector?: string | number) => {
+    const run = get(idOrPrefix.trim());
+    if (!run) throw new Error(`No background workflow found for: ${idOrPrefix}`);
+    const agent = selectTranscriptAgent(run, selector);
+    if (!agent?.sessionFile) throw new Error(`No persisted child session matched selector: ${selector ?? "(first)"}`);
+    const runner = new WorkflowAgent({ cwd: run.cwd });
+    const result = await runner.resume(prompt, agent.sessionFile, { label: `resume ${agent.label}` });
+    appendEventSync(run, { type: "workflow.agent.resumed", label: agent.label, sessionFile: agent.sessionFile, prompt, resultPreview: preview(result) });
+    return result;
+  };
+
   const formatStatus = (idOrPrefix?: string) => {
     if (idOrPrefix?.trim()) {
       const run = get(idOrPrefix.trim());
@@ -426,7 +438,7 @@ export function createBackgroundWorkflowManager(
     return formatRunTranscript(run, selector, lines);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, formatStatus, formatResult, formatTranscript };
+  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, formatStatus, formatResult, formatTranscript };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {
@@ -455,9 +467,9 @@ export function formatRunResult(run: BackgroundWorkflowRun): string {
   return lines.join("\n");
 }
 
-export function formatRunTranscript(run: BackgroundWorkflowRun, selector?: string | number, lines = 80): string {
+function selectTranscriptAgent(run: BackgroundWorkflowRun, selector?: string | number) {
   const agents = run.snapshot.agents.filter((agent) => agent.sessionFile);
-  if (agents.length === 0) return `Workflow ${run.id} has no persisted child session transcripts.`;
+  if (agents.length === 0) return undefined;
   let agent = agents[0];
   if (selector !== undefined) {
     if (typeof selector === "number" || /^\d+$/.test(String(selector))) {
@@ -468,6 +480,12 @@ export function formatRunTranscript(run: BackgroundWorkflowRun, selector?: strin
       agent = agents.find((candidate) => candidate.label.toLowerCase().includes(text)) ?? agent;
     }
   }
+  return agent;
+}
+
+export function formatRunTranscript(run: BackgroundWorkflowRun, selector?: string | number, lines = 80): string {
+  if (!run.snapshot.agents.some((agent) => agent.sessionFile)) return `Workflow ${run.id} has no persisted child session transcripts.`;
+  const agent = selectTranscriptAgent(run, selector);
   if (!agent?.sessionFile) return `No child agent transcript matched selector: ${selector ?? "(first)"}`;
   if (!existsSync(agent.sessionFile)) return `Child transcript file is missing: ${agent.sessionFile}`;
   const entries = readFileSync(agent.sessionFile, "utf8")

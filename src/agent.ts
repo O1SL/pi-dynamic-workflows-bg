@@ -104,6 +104,36 @@ export class WorkflowAgent {
     }
   }
 
+  async resume(prompt: string, sessionFile: string, options: AgentRunOptions = {}): Promise<string> {
+    const customTools: ToolDefinition[] = [...this.baseTools, ...(options.tools ?? [])];
+    const agentDir = getAgentDir();
+    const sessionManager = SessionManager.open(sessionFile, undefined, this.cwd);
+    const { session } = await createAgentSession({
+      cwd: this.cwd,
+      agentDir,
+      sessionManager,
+      settingsManager: SettingsManager.create(this.cwd, agentDir),
+      customTools,
+      ...this.sessionOptions,
+    });
+    let removeAbortListener: (() => void) | undefined;
+    try {
+      if (options.signal?.aborted) throw new Error("Subagent was aborted");
+      if (options.signal) {
+        const onAbort = () => void session.abort();
+        options.signal.addEventListener("abort", onAbort, { once: true });
+        removeAbortListener = () => options.signal?.removeEventListener("abort", onAbort);
+      }
+      await session.prompt(this.buildPrompt(prompt, options, false));
+      if (options.signal?.aborted) throw new Error("Subagent was aborted");
+      this.throwIfLastAssistantErrored(session.messages);
+      return this.lastAssistantText(session.messages);
+    } finally {
+      removeAbortListener?.();
+      session.dispose();
+    }
+  }
+
   private buildPrompt(prompt: string, options: AgentRunOptions<any>, structured: boolean): string {
     const parts = [
       this.instructions,

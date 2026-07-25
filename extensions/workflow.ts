@@ -134,6 +134,25 @@ export default function extension(pi: ExtensionAPI) {
   }));
 
   pi.registerTool(defineTool({
+    name: "workflow_resume",
+    label: "Workflow Resume",
+    description: "Resume a persisted child agent session from a background workflow with a follow-up prompt. Experimental revive-style capability.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Run id or prefix." }),
+      prompt: Type.String({ description: "Follow-up prompt to send to the child session." }),
+      agent: Type.Optional(Type.String({ description: "Optional agent label substring or 1-based index." })),
+    }),
+    async execute(_id, params, signal) {
+      try {
+        const text = await manager.resumeChild(params.id, params.prompt, params.agent);
+        return { content: [{ type: "text", text }], details: { action: "resume", id: params.id, agent: params.agent } };
+      } catch (error) {
+        return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { action: "resume", id: params.id, agent: params.agent } };
+      }
+    },
+  }));
+
+  pi.registerTool(defineTool({
     name: "workflow_cancel",
     label: "Workflow Cancel",
     description: "Cancel a running background workflow by id/prefix.",
@@ -204,6 +223,24 @@ export default function extension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-resume", {
+    description: "Resume a child session. Usage: /workflow-resume <run-id-prefix> -- <follow-up prompt>",
+    handler: async (args, ctx) => {
+      const [idPart, ...rest] = args.split(/\s+--\s+/);
+      const id = idPart.trim();
+      const prompt = rest.join(" -- ").trim();
+      if (!id || !prompt) {
+        ctx.ui.notify("Usage: /workflow-resume <run-id-prefix> -- <follow-up prompt>", "error");
+        return;
+      }
+      try {
+        ctx.ui.notify(await manager.resumeChild(id, prompt), "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
+  });
+
   pi.registerCommand("workflow-cancel", {
     description: "Cancel a running background workflow. Usage: /workflow-cancel <run-id-prefix>",
     handler: async (args, ctx) => {
@@ -218,7 +255,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_transcript", "workflow_cancel", "workflow_wait"];
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_transcript", "workflow_resume", "workflow_cancel", "workflow_wait"];
     const next = [...active];
     for (const tool of requiredTools) {
       if (!next.includes(tool)) next.push(tool);
