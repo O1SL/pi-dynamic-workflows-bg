@@ -22,6 +22,7 @@ export interface BackgroundWorkflowRun {
   status: BackgroundWorkflowStatus;
   cwd: string;
   sessionId?: string;
+  ownerPid?: number;
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -127,6 +128,7 @@ export function createBackgroundWorkflowManager(
         const settled = new Promise<void>((resolve) => {
           resolveSettled = resolve;
         });
+        if (raw.status === "running" && raw.ownerPid === process.pid) continue;
         const status: BackgroundWorkflowStatus = raw.status === "running" ? "interrupted" : raw.status;
         const restored: BackgroundWorkflowRun = {
           id: raw.id,
@@ -135,6 +137,7 @@ export function createBackgroundWorkflowManager(
           status,
           cwd: raw.cwd ?? process.cwd(),
           ...(raw.sessionId ? { sessionId: raw.sessionId } : {}),
+          ...(raw.ownerPid ? { ownerPid: raw.ownerPid } : {}),
           startedAt: raw.startedAt ?? new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           ...(raw.completedAt ? { completedAt: raw.completedAt } : status === "interrupted" ? { completedAt: new Date().toISOString() } : {}),
@@ -181,6 +184,7 @@ export function createBackgroundWorkflowManager(
       status: "running",
       cwd: startOptions.cwd ?? process.cwd(),
       ...(startOptions.sessionId ? { sessionId: startOptions.sessionId } : {}),
+      ownerPid: process.pid,
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       artifactDir,
@@ -194,7 +198,7 @@ export function createBackgroundWorkflowManager(
     };
     runs.set(id, run);
     await persist(run);
-    await appendEvent(run, { type: "workflow.started", id: run.id, name: run.name, cwd: run.cwd });
+    appendEventSync(run, { type: "workflow.started", id: run.id, name: run.name, cwd: run.cwd });
 
     void (async () => {
       try {
@@ -207,18 +211,18 @@ export function createBackgroundWorkflowManager(
           session: startOptions.session,
           onLog(message) {
             run.snapshot.logs.push(message);
-            void appendEvent(run, { type: "workflow.log", message }).catch(() => undefined);
+            appendEventSync(run, { type: "workflow.log", message });
             update(run);
           },
           onPhase(title) {
             run.snapshot.currentPhase = title;
             if (!run.snapshot.phases.includes(title)) run.snapshot.phases.push(title);
-            void appendEvent(run, { type: "workflow.phase", title }).catch(() => undefined);
+            appendEventSync(run, { type: "workflow.phase", title });
             update(run);
           },
           onAgentStart(event) {
             if (!run.snapshot.phases.includes(event.phase ?? "") && event.phase) run.snapshot.phases.push(event.phase);
-            void appendEvent(run, { type: "workflow.agent.started", label: event.label, phase: event.phase, prompt: event.prompt }).catch(() => undefined);
+            appendEventSync(run, { type: "workflow.agent.started", label: event.label, phase: event.phase, prompt: event.prompt });
             run.snapshot.agents.push({
               id: run.snapshot.agents.length + 1,
               label: event.label,
@@ -236,7 +240,7 @@ export function createBackgroundWorkflowManager(
               agent.status = event.result === null ? "error" : "done";
               agent.resultPreview = preview(event.result);
             }
-            void appendEvent(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result) }).catch(() => undefined);
+            appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result) });
             update(run);
           },
         });
@@ -249,11 +253,11 @@ export function createBackgroundWorkflowManager(
         run.status = "completed";
         run.snapshot.result = result.result;
         run.snapshot.durationMs = result.durationMs;
-        void appendEvent(run, { type: "workflow.completed", id: run.id }).catch(() => undefined);
+        appendEventSync(run, { type: "workflow.completed", id: run.id });
       } catch (error) {
         run.status = run.controller.signal.aborted ? "cancelled" : "failed";
         run.error = error instanceof Error ? error.message : String(error);
-        void appendEvent(run, { type: run.status === "cancelled" ? "workflow.cancelled" : "workflow.failed", id: run.id, error: run.error }).catch(() => undefined);
+        appendEventSync(run, { type: run.status === "cancelled" ? "workflow.cancelled" : "workflow.failed", id: run.id, error: run.error });
         for (const agent of run.snapshot.agents) {
           if (agent.status === "running") {
             agent.status = run.status === "cancelled" ? "skipped" : "error";
