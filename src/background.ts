@@ -670,7 +670,11 @@ export function createBackgroundWorkflowManager(
     }
     const all = list();
     if (all.length === 0) return "No background workflows in this session.";
-    return ["Background workflows:", ...all.map((run) => `- ${formatRunStatus(run, false)}`)].join("\n");
+    const counts = countRunsByStatus(all);
+    return [
+      `Background workflows (${all.length}): running ${counts.running}, completed ${counts.completed}, failed ${counts.failed}, cancelled ${counts.cancelled}, interrupted ${counts.interrupted}`,
+      ...all.map((run) => `- ${formatRunStatus(run, false)}`),
+    ].join("\n");
   };
 
   const formatResult = (idOrPrefix: string) => {
@@ -703,6 +707,13 @@ export function createBackgroundWorkflowManager(
 function timestampOfRun(run: BackgroundWorkflowRun): number {
   const value = Date.parse(run.completedAt ?? run.updatedAt ?? run.startedAt);
   return Number.isFinite(value) ? value : 0;
+}
+
+function countRunsByStatus(runs: BackgroundWorkflowRun[]): Record<BackgroundWorkflowStatus, number> {
+  return runs.reduce<Record<BackgroundWorkflowStatus, number>>((counts, run) => {
+    counts[run.status]++;
+    return counts;
+  }, { running: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0 });
 }
 
 function nonNegativeFiniteNumber(value: unknown, name: string): number {
