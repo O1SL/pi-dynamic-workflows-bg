@@ -134,7 +134,32 @@ assert(notifications.some((n) => n.status === 'failed'), 'no failed notification
 assert(notifications.some((n) => n.status === 'cancelled'), 'no cancelled notification');
 assert(notifications.some((n) => n.status === 'batch' && n.count >= 2), 'no batched completion notification');
 
-// 7. Restore historical runs and convert stale running records to interrupted.
+// 7. Notification size limit keeps model-visible content compact while preserving full artifacts.
+const smallNotifications = [];
+const smallManager = createBackgroundWorkflowManager({
+  runsRoot: tmp,
+  maxNotificationChars: 600,
+  notificationBatchMs: 0,
+  notify(message, run) {
+    smallNotifications.push({ message, id: run.id, status: run.status });
+  },
+});
+const hugeScript = `export const meta = { name: 'huge_result_case', description: 'huge result case' }
+const result = await agent('huge', { label: 'huge' })
+return { result }
+`;
+const hugeRun = await smallManager.start({
+  script: hugeScript,
+  sessionId: 'session-huge',
+  agent: { async run() { return 'X'.repeat(5000); } },
+});
+await smallManager.waitForRun(hugeRun.id, 2000);
+assert(smallNotifications.length === 1, `expected one small notification, got ${smallNotifications.length}`);
+assert(smallNotifications[0].message.includes('Notification truncated'), 'large notification was not truncated');
+const hugeOutput = await readFile(hugeRun.outputPath, 'utf8');
+assert(hugeOutput.includes('X'.repeat(1000)), 'full huge output artifact was not preserved');
+
+// 8. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');
