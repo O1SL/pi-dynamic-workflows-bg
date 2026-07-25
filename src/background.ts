@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
-import type { WorkflowAgentOptions } from "./agent.js";
+import type { WorkflowAgent, WorkflowAgentOptions } from "./agent.js";
 import {
   createWorkflowSnapshot,
   preview,
@@ -37,6 +37,7 @@ export interface BackgroundWorkflowRun {
 export interface BackgroundWorkflowStartOptions extends WorkflowAgentOptions {
   script: string;
   args?: unknown;
+  agent?: Pick<WorkflowAgent, "run">;
   concurrency?: number;
   session?: Partial<CreateAgentSessionOptions>;
 }
@@ -115,6 +116,7 @@ export function createBackgroundWorkflowManager(
           args: startOptions.args,
           concurrency: startOptions.concurrency,
           signal: run.controller.signal,
+          agent: startOptions.agent,
           session: startOptions.session,
           onLog(message) {
             run.snapshot.logs.push(message);
