@@ -26,6 +26,11 @@ export interface WorkflowAgentOptions {
 
 export type { AgentToolBudget } from "./tool-budget.js";
 
+export interface AgentTurnBudget {
+  maxTurns: number;
+  graceTurns?: number;
+}
+
 export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefined> {
   label?: string;
   schema?: TSchemaDef;
@@ -35,6 +40,7 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   onSession?: (info: { sessionFile?: string; label?: string }) => void;
   model?: string;
   toolBudget?: AgentToolBudget;
+  turnBudget?: AgentTurnBudget;
 }
 
 export type AgentRunResult<TSchemaDef extends TSchema | undefined> = TSchemaDef extends TSchema
@@ -86,6 +92,7 @@ export class WorkflowAgent {
 
     let removeAbortListener: (() => void) | undefined;
     try {
+      const assistantTurnsBefore = this.assistantTurnCount(session.messages);
       if (options.signal?.aborted) throw new Error("Subagent was aborted");
       if (options.signal) {
         const onAbort = () => void session.abort();
@@ -95,6 +102,7 @@ export class WorkflowAgent {
 
       await session.prompt(this.buildPrompt(prompt, options as AgentRunOptions<any>, Boolean(options.schema)));
       if (options.signal?.aborted) throw new Error("Subagent was aborted");
+      this.throwIfTurnBudgetExceeded(session.messages, assistantTurnsBefore, options.turnBudget);
       this.throwIfLastAssistantErrored(session.messages);
 
       if (options.schema) {
@@ -127,6 +135,7 @@ export class WorkflowAgent {
     });
     let removeAbortListener: (() => void) | undefined;
     try {
+      const assistantTurnsBefore = this.assistantTurnCount(session.messages);
       if (options.signal?.aborted) throw new Error("Subagent was aborted");
       if (options.signal) {
         const onAbort = () => void session.abort();
@@ -135,6 +144,7 @@ export class WorkflowAgent {
       }
       await session.prompt(this.buildPrompt(prompt, options, false));
       if (options.signal?.aborted) throw new Error("Subagent was aborted");
+      this.throwIfTurnBudgetExceeded(session.messages, assistantTurnsBefore, options.turnBudget);
       this.throwIfLastAssistantErrored(session.messages);
       return this.lastAssistantText(session.messages);
     } finally {
@@ -170,6 +180,10 @@ export class WorkflowAgent {
       prompt,
     ].filter(Boolean);
 
+    if (options.turnBudget) {
+      parts.push(`Turn budget: complete within ${options.turnBudget.maxTurns} assistant turn(s)${options.turnBudget.graceTurns ? ` plus ${options.turnBudget.graceTurns} grace turn(s)` : ""}. If you cannot finish, report the blocker concisely.`);
+    }
+
     if (structured) {
       parts.push(
         [
@@ -183,6 +197,17 @@ export class WorkflowAgent {
     }
 
     return parts.join("\n\n");
+  }
+
+  private assistantTurnCount(messages: unknown[]): number {
+    return messages.filter((message) => (message as Partial<AssistantMessage> | undefined)?.role === "assistant").length;
+  }
+
+  private throwIfTurnBudgetExceeded(messages: unknown[], assistantTurnsBefore: number, budget: AgentTurnBudget | undefined): void {
+    if (!budget) return;
+    const used = this.assistantTurnCount(messages) - assistantTurnsBefore;
+    const allowed = budget.maxTurns + (budget.graceTurns ?? 0);
+    if (used > allowed) throw new Error(`Subagent turn budget exceeded: used ${used}, allowed ${allowed}`);
   }
 
   private throwIfLastAssistantErrored(messages: unknown[]): void {

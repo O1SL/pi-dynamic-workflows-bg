@@ -6,7 +6,7 @@ import vm from "node:vm";
 import type { Node } from "acorn";
 import { parse } from "acorn";
 import type { TSchema } from "typebox";
-import { WorkflowAgent, type AgentToolBudget, type WorkflowAgentOptions } from "./agent.js";
+import { WorkflowAgent, type AgentToolBudget, type AgentTurnBudget, type WorkflowAgentOptions } from "./agent.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,6 +57,7 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
   agentType?: string;
   timeoutMs?: number;
   toolBudget?: AgentToolBudget;
+  turnBudget?: AgentTurnBudget;
 }
 
 interface RuntimeState {
@@ -142,6 +143,7 @@ export async function runWorkflow<T = unknown>(
               signal: childSignal,
               model,
               toolBudget: normalizedOptions.toolBudget,
+              turnBudget: normalizedOptions.turnBudget,
               instructions: buildAgentInstructions(assignedPhase, { ...normalizedOptions, model }),
               onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
             } as any);
@@ -467,7 +469,18 @@ function normalizeAgentOptions(value: unknown): AgentOptions {
     timeoutMs: optionalPositiveNumber(options.timeoutMs, "agent timeoutMs"),
     fallbackModels: optionalStringArray((options as AgentOptions & { fallbackModels?: unknown }).fallbackModels, "agent fallbackModels"),
     toolBudget: optionalToolBudget((options as AgentOptions & { toolBudget?: unknown }).toolBudget),
+    turnBudget: optionalTurnBudget((options as AgentOptions & { turnBudget?: unknown }).turnBudget),
   };
+}
+
+function optionalTurnBudget(value: unknown): AgentTurnBudget | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("agent turnBudget must be an object");
+  const raw = value as Record<string, unknown>;
+  const maxTurns = optionalPositiveNumber(raw.maxTurns, "agent turnBudget.maxTurns");
+  if (maxTurns === undefined) throw new TypeError("agent turnBudget.maxTurns is required");
+  const graceTurns = optionalPositiveNumber(raw.graceTurns, "agent turnBudget.graceTurns");
+  return { maxTurns, ...(graceTurns !== undefined ? { graceTurns } : {}) };
 }
 
 function optionalToolBudget(value: unknown): AgentToolBudget | undefined {
@@ -545,6 +558,7 @@ function buildAgentInstructions(phase: string | undefined, options: AgentOptions
   if (options.timeoutMs) lines.push(`Requested timeoutMs: ${options.timeoutMs}`);
   if (options.fallbackModels?.length) lines.push(`Fallback models: ${options.fallbackModels.join(", ")}`);
   if (options.toolBudget) lines.push(`Tool budget hard limit: ${options.toolBudget.hard}`);
+  if (options.turnBudget) lines.push(`Turn budget: ${options.turnBudget.maxTurns} + ${options.turnBudget.graceTurns ?? 0} grace`);
   return lines.length ? lines.join("\n") : undefined;
 }
 

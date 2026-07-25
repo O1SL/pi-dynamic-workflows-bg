@@ -323,7 +323,21 @@ const toolBudgetRun = await manager.start({
 await manager.waitForRun(toolBudgetRun.id, 2000);
 assert(observedToolBudget?.hard === 2 && observedToolBudget?.block === '*', `toolBudget not passed through: ${JSON.stringify(observedToolBudget)}`);
 
-// 15. Restore historical runs and convert stale running records to interrupted.
+// 15. agent({ turnBudget }) is passed through to the child runner.
+let observedTurnBudget;
+const turnBudgetScript = `export const meta = { name: 'turn_budget_case', description: 'turn budget case' }
+const result = await agent('turn-budget-check', { label: 'turn budget child', turnBudget: { maxTurns: 1, graceTurns: 1 } })
+return { result }
+`;
+const turnBudgetRun = await manager.start({
+  script: turnBudgetScript,
+  sessionId: 'session-turn-budget',
+  agent: { async run(_prompt, opts) { observedTurnBudget = opts.turnBudget; return 'turn-budget-ok'; } },
+});
+await manager.waitForRun(turnBudgetRun.id, 2000);
+assert(observedTurnBudget?.maxTurns === 1 && observedTurnBudget?.graceTurns === 1, `turnBudget not passed through: ${JSON.stringify(observedTurnBudget)}`);
+
+// 16. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');
