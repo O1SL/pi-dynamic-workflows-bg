@@ -84,6 +84,10 @@ const statusResult = await statusTool.execute('status-1', { id: runId }, undefin
 if (!statusResult.content[0].text.includes(runId)) throw new Error('workflow_status did not include run id');
 const statusListResult = await statusTool.execute('status-list', { limit: 1 }, undefined, undefined, {});
 if (!statusListResult.content[0].text.includes('Background workflows (')) throw new Error('workflow_status list did not include count header');
+await statusTool.execute('status-bad', { limit: Number.NaN }, undefined, undefined, {})
+  .then(() => { throw new Error('workflow_status invalid limit should fail'); }, (error) => {
+    if (!String(error).includes('workflow status limit')) throw new Error(`workflow_status invalid limit error mismatch: ${error}`);
+  });
 
 const resultTool = tools.get('workflow_result');
 const resultResult = await resultTool.execute('result-1', { id: runId }, undefined, undefined, {});

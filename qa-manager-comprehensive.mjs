@@ -288,6 +288,23 @@ assert(scopedOther.status === 'running', 'session-scoped wait should not wait un
 assert(manager.cancel(scopedOther.id), 'failed to cancel unrelated scoped run');
 await manager.waitForRun(scopedOther.id, 2000);
 assert(unrelatedAbortObserved && scopedOther.status === 'cancelled', 'unrelated scoped run did not cancel cleanly');
+const waitTimeoutRun = await manager.start({
+  script: waitScopedScript,
+  sessionId: 'session-wait-timeout',
+  agent: {
+    async run(_prompt, opts) {
+      await new Promise((resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => reject(new Error('wait timeout run aborted')), { once: true });
+      });
+    },
+  },
+});
+await manager.waitForRun(waitTimeoutRun.id, 10)
+  .then(() => { throw new Error('waitForRun timeout should fail'); }, (error) => {
+    assert(String(error).includes('Timed out waiting'), `waitForRun timeout error mismatch: ${error}`);
+  });
+assert(manager.cancel(waitTimeoutRun.id), 'failed to cancel wait timeout run');
+await manager.waitForRun(waitTimeoutRun.id, 2000);
 
 // 7. Notification coverage: success/fail/no-agent/cancel/concurrent x2 with batching.
 const notifiedRunCount = notifications.reduce((total, n) => total + (n.count ?? 1), 0);
@@ -521,6 +538,13 @@ assert(observedTurnBudget?.maxTurns === 1 && observedTurnBudget?.graceTurns === 
 // 17. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
+const restoreDisabledManager = createBackgroundWorkflowManager({ runsRoot: tmp, restore: false });
+assert(restoreDisabledManager.get(success.id) === undefined && restoreDisabledManager.list().length === 0, 'restore:false manager should not hydrate disk runs');
+const malformedDir = join(tmp, '20990101000006-malformed-case');
+await mkdir(malformedDir, { recursive: true });
+await writeFile(join(malformedDir, 'status.json'), '{not valid json');
+const restoredWithMalformed = makeManager(tmp, []);
+assert(restoredWithMalformed.get('20990101000006-malformed-case') === undefined, 'malformed status should be ignored');
 const staleDir = join(tmp, '20990101000000-stale-case');
 await mkdir(staleDir, { recursive: true });
 await writeFile(join(staleDir, 'status.json'), JSON.stringify({
@@ -653,6 +677,30 @@ assert(ambiguousText.includes('Ambiguous background workflow id/prefix'), 'ambig
 assert(ambiguousText.includes('20990101000003-ambiguous-a') && ambiguousText.includes('20990101000003-ambiguous-b'), 'ambiguous prefix did not list candidates');
 
 // 21. Prune is dry-run by default, only targets terminal runs, honors keepLast, and removes candidates when explicitly requested.
+const pruneActiveRun = await lazyManager.start({
+  script: waitScopedScript,
+  sessionId: 'session-prune-active',
+  agent: { async run(_prompt, opts) { await new Promise((resolve, reject) => opts.signal?.addEventListener('abort', () => reject(new Error('prune active abort')), { once: true })); } },
+});
+const pruneActive = await lazyManager.pruneRuns({ keepLast: 0, dryRun: false });
+assert(!pruneActive.removed.includes(pruneActiveRun.id) && existsSync(pruneActiveRun.artifactDir), 'prune removed a running workflow');
+assert(lazyManager.cancel(pruneActiveRun.id), 'failed to cancel prune active run');
+await lazyManager.waitForRun(pruneActiveRun.id, 2000);
+const recentDir = join(tmp, '20990101000005-recent-prune-case');
+const oldDir = join(tmp, '20000101000000-old-prune-case');
+for (const [id, dir, iso] of [
+  ['20990101000005-recent-prune-case', recentDir, new Date().toISOString()],
+  ['20000101000000-old-prune-case', oldDir, '2000-01-01T00:00:00.000Z'],
+]) {
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'status.json'), JSON.stringify({
+    id, name: id, description: 'olderThan prune case', status: 'completed', cwd: process.cwd(), startedAt: iso, updatedAt: iso, completedAt: iso,
+    artifactDir: dir, outputPath: join(dir, 'output.md'), resultPath: join(dir, 'result.json'), statusPath: join(dir, 'status.json'), eventsPath: join(dir, 'events.jsonl'),
+    snapshot: { name: id, description: 'olderThan prune case', phases: [], logs: [], agents: [], agentCount: 0, runningCount: 0, doneCount: 0, errorCount: 0 },
+  }, null, 2));
+}
+const olderPreview = await lazyManager.pruneRuns({ keepLast: 0, olderThanDays: 1 });
+assert(olderPreview.candidates.includes('20000101000000-old-prune-case') && !olderPreview.candidates.includes('20990101000005-recent-prune-case'), `olderThan prune mismatch: ${JSON.stringify(olderPreview)}`);
 const prunePreview = await lazyManager.pruneRuns({ keepLast: 1 });
 assert(prunePreview.dryRun === true && prunePreview.candidates.length >= 1 && prunePreview.removed.length === 0, `unexpected prune preview: ${JSON.stringify(prunePreview)}`);
 assert(existsSync(join(tmp, prunePreview.candidates[0], 'status.json')), 'dry-run prune removed artifacts unexpectedly');

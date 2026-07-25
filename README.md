@@ -170,7 +170,8 @@ See [`docs/PARITY.md`](docs/PARITY.md) for the detailed parity matrix versus `pi
 ## QA
 
 ```bash
-npm run build
+npm test        # same as npm run qa:full
+npm run check   # TypeScript build gate
 npm run qa:smoke
 ```
 
@@ -179,7 +180,7 @@ npm run qa:smoke
 1. `qa-smoke.mjs` — mock-agent background execution, notification callback, and artifact checks.
 2. `qa-extension-smoke.mjs` — extension registration, model-visible `sendMessage(... triggerTurn:true)` completion, and same-realm `pi-subagents.background-work.v1` provider checks.
 
-`qa:full` additionally runs `qa-tool-budget.mjs` and `qa-manager-comprehensive.mjs`, covering success, failure, no-agent validation, cancellation, concurrent id collision prevention, provider-active visibility, session-scoped wait, retry/fallback, budgets, worktrees, lazy restore, prune, trusted artifact paths, atomic writes, and artifact outputs.
+`qa:full` additionally runs `qa-tool-budget.mjs` and `qa-manager-comprehensive.mjs`, covering success, failure, no-agent validation, cancellation, concurrent id collision prevention, provider-active visibility, session-scoped wait, wait timeout, retry/fallback, budgets, worktrees, lazy restore, malformed/restore-disabled restore paths, prune active-run protection and older-than filtering, trusted artifact paths, atomic writes, deterministic runtime hardening, best-effort graph serialization/nesting/terminal states, and artifact outputs.
 
 ## License
 

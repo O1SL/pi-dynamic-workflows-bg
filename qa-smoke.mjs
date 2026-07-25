@@ -64,4 +64,15 @@ if (typeof toolRunId === 'string') {
   await manager.waitForRun(toolRunId, 2000).catch(() => undefined);
 }
 
+const foregroundTool = createWorkflowTool({
+  agent: { async run(prompt, opts) { return `fg:${opts?.label}:${prompt}`; } },
+});
+const foregroundResult = await foregroundTool.execute?.('call-fg', { script, foreground: true }, undefined, undefined, {
+  cwd: process.cwd(),
+  modelRegistry: undefined,
+  model: undefined,
+});
+if (!foregroundResult?.details?.graph?.nodes?.some((node) => node.kind === 'parallel')) throw new Error('foreground workflow details.graph missing parallel group');
+if (!foregroundResult.details.graph.nodes.some((node) => node.parentId && node.kind === 'agent')) throw new Error('foreground workflow details.graph missing grouped agent');
+
 console.log(JSON.stringify({ ok: true, tmp, runId: run.id, notification: notifications[0] }, null, 2));

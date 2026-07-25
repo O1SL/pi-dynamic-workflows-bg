@@ -12,6 +12,7 @@ import {
   upsertWorkflowGraphNode,
   type WorkflowSnapshot,
 } from "./display.js";
+import type { WorkflowAgent } from "./agent.js";
 import type { BackgroundWorkflowManager } from "./background.js";
 import { parseWorkflowScript, runWorkflow, type WorkflowRunResult } from "./workflow.js";
 
@@ -57,6 +58,8 @@ export interface WorkflowToolOptions {
   cwd?: string;
   concurrency?: number;
   backgroundManager?: BackgroundWorkflowManager;
+  /** Optional test/embed hook for supplying a custom child-agent runner. */
+  agent?: Pick<WorkflowAgent, "run">;
 }
 
 function resolveWorkflowSessionId(sessionManager: unknown): string | undefined {
@@ -109,6 +112,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           concurrency: params.concurrency ?? options.concurrency,
           tokenBudget: params.tokenBudget,
           sessionId: resolveWorkflowSessionId(ctx.sessionManager),
+          agent: options.agent,
           session: {
             modelRegistry: ctx.modelRegistry,
             model: ctx.model,
@@ -158,6 +162,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
           signal,
           concurrency: params.concurrency ?? options.concurrency,
           tokenBudget: params.tokenBudget,
+          agent: options.agent,
           session: {
             modelRegistry: ctx.modelRegistry,
             model: ctx.model,
