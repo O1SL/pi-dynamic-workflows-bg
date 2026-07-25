@@ -1,6 +1,6 @@
 # Subagent-style parity status
 
-This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` for production background orchestration.
+This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` for production background orchestration. For deliberate non-goals and detailed limitations, see [`UNSUPPORTED.md`](UNSUPPORTED.md).
 
 ## Implemented
 
