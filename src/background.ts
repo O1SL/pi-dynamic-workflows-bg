@@ -88,6 +88,20 @@ function defaultRunsRoot(): string {
   return join(agentDir, "background-workflows", "runs");
 }
 
+function isPathInside(parent: string, child: string): boolean {
+  const root = resolve(parent);
+  const target = resolve(child);
+  return target === root || target.startsWith(root.endsWith("/") ? root : `${root}/`);
+}
+
+function safeArtifactPath(artifactDir: string, value: unknown, fallbackName: string): string {
+  if (typeof value === "string") {
+    const candidate = resolve(value);
+    if (isPathInside(artifactDir, candidate)) return candidate;
+  }
+  return join(artifactDir, fallbackName);
+}
+
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -222,6 +236,7 @@ export function createBackgroundWorkflowManager(
       });
       if (raw.status === "running" && raw.ownerPid && isProcessAlive(raw.ownerPid)) return undefined;
       const status: BackgroundWorkflowStatus = raw.status === "running" ? "interrupted" : raw.status;
+      const artifactDir = resolve(statusPath, "..");
       const restored: BackgroundWorkflowRun = {
         id: raw.id,
         name: raw.name,
@@ -233,11 +248,11 @@ export function createBackgroundWorkflowManager(
         startedAt: raw.startedAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         ...(raw.completedAt ? { completedAt: raw.completedAt } : status === "interrupted" ? { completedAt: new Date().toISOString() } : {}),
-        artifactDir: raw.artifactDir,
-        outputPath: raw.outputPath ?? join(raw.artifactDir, "output.md"),
-        resultPath: raw.resultPath ?? join(raw.artifactDir, "result.json"),
-        statusPath: raw.statusPath,
-        eventsPath: raw.eventsPath ?? join(raw.artifactDir, "events.jsonl"),
+        artifactDir,
+        outputPath: safeArtifactPath(artifactDir, raw.outputPath, "output.md"),
+        resultPath: safeArtifactPath(artifactDir, raw.resultPath, "result.json"),
+        statusPath,
+        eventsPath: safeArtifactPath(artifactDir, raw.eventsPath, "events.jsonl"),
         snapshot: raw.snapshot ?? createWorkflowSnapshot({ name: raw.name, description: raw.description ?? raw.name }),
         ...(raw.result ? { result: raw.result as WorkflowRunResult } : {}),
         ...(raw.error ? { error: raw.error } : status === "interrupted" ? { error: "Workflow was interrupted by process shutdown or reload." } : {}),
@@ -814,6 +829,7 @@ export function formatRunTranscript(run: BackgroundWorkflowRun, selector?: strin
   if (!run.snapshot.agents.some((agent) => agent.sessionFile)) return `Workflow ${run.id} has no persisted child session transcripts.`;
   const agent = selectTranscriptAgent(run, selector);
   if (!agent?.sessionFile) return `No child agent transcript matched selector: ${selector ?? "(first)"}`;
+  if (!isPathInside(run.artifactDir, agent.sessionFile)) return `Child transcript file is outside workflow artifact directory: ${agent.sessionFile}`;
   if (!existsSync(agent.sessionFile)) return `Child transcript file is missing: ${agent.sessionFile}`;
   const entries = readFileSync(agent.sessionFile, "utf8")
     .split("\n")

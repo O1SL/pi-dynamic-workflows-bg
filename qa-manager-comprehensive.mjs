@@ -472,7 +472,44 @@ assert(lazyManager.get('20990101000001-lazy')?.status === 'completed', 'lazy run
 assert(lazyManager.formatResult('20990101000001-lazy').includes('"lazy": true'), 'lazy restored result not formatted');
 assert(lazyManager.formatEvents('20990101000001-lazy').includes('workflow.completed'), 'lazy restored events not formatted');
 
-// 19. Ambiguous prefixes report candidate run ids instead of looking like a missing run.
+// 19. Restored artifact paths are constrained to the real artifact directory.
+const unsafeDir = join(tmp, '20990101000004-unsafe-paths');
+await mkdir(unsafeDir, { recursive: true });
+await writeFile(join(unsafeDir, 'status.json'), JSON.stringify({
+  id: '20990101000004-unsafe-paths',
+  name: 'unsafe_paths',
+  description: 'unsafe restored paths case',
+  status: 'completed',
+  cwd: process.cwd(),
+  startedAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  completedAt: new Date().toISOString(),
+  artifactDir: '/tmp/should-not-be-trusted',
+  outputPath: '/tmp/unsafe-output.md',
+  resultPath: '/tmp/unsafe-result.json',
+  statusPath: '/tmp/unsafe-status.json',
+  eventsPath: '/tmp/unsafe-events.jsonl',
+  snapshot: {
+    name: 'unsafe_paths',
+    description: 'unsafe restored paths case',
+    phases: [],
+    logs: [],
+    agents: [{ id: 1, label: 'unsafe child', prompt: 'x', status: 'done', sessionFile: '/tmp/unsafe-session.jsonl' }],
+    agentCount: 1,
+    runningCount: 0,
+    doneCount: 1,
+    errorCount: 0,
+  },
+}, null, 2));
+const unsafeRun = lazyManager.get('20990101000004-unsafe-paths');
+assert(unsafeRun?.artifactDir === unsafeDir, `unsafe artifactDir was trusted: ${unsafeRun?.artifactDir}`);
+assert(unsafeRun.outputPath === join(unsafeDir, 'output.md'), `unsafe outputPath was trusted: ${unsafeRun.outputPath}`);
+assert(unsafeRun.resultPath === join(unsafeDir, 'result.json'), `unsafe resultPath was trusted: ${unsafeRun.resultPath}`);
+assert(unsafeRun.statusPath === join(unsafeDir, 'status.json'), `unsafe statusPath was trusted: ${unsafeRun.statusPath}`);
+assert(unsafeRun.eventsPath === join(unsafeDir, 'events.jsonl'), `unsafe eventsPath was trusted: ${unsafeRun.eventsPath}`);
+assert(lazyManager.formatTranscript('20990101000004-unsafe-paths').includes('outside workflow artifact directory'), 'unsafe transcript path was not rejected');
+
+// 20. Ambiguous prefixes report candidate run ids instead of looking like a missing run.
 for (const id of ['20990101000003-ambiguous-a', '20990101000003-ambiguous-b']) {
   const dir = join(tmp, id);
   await mkdir(dir, { recursive: true });
@@ -497,7 +534,7 @@ const ambiguousText = lazyManager.formatResult('20990101000003');
 assert(ambiguousText.includes('Ambiguous background workflow id/prefix'), 'ambiguous prefix did not report ambiguity');
 assert(ambiguousText.includes('20990101000003-ambiguous-a') && ambiguousText.includes('20990101000003-ambiguous-b'), 'ambiguous prefix did not list candidates');
 
-// 20. Prune is dry-run by default, only targets terminal runs, honors keepLast, and removes candidates when explicitly requested.
+// 21. Prune is dry-run by default, only targets terminal runs, honors keepLast, and removes candidates when explicitly requested.
 const prunePreview = await lazyManager.pruneRuns({ keepLast: 1 });
 assert(prunePreview.dryRun === true && prunePreview.candidates.length >= 1 && prunePreview.removed.length === 0, `unexpected prune preview: ${JSON.stringify(prunePreview)}`);
 assert(existsSync(join(tmp, prunePreview.candidates[0], 'status.json')), 'dry-run prune removed artifacts unexpectedly');
@@ -509,7 +546,7 @@ await lazyManager.pruneRuns({ keepLast: Number.NaN })
     assert(String(error).includes('keepLast'), `invalid prune keepLast error mismatch: ${error}`);
   });
 
-// 21. Atomic artifact writes clean up temporary files if final rename fails.
+// 22. Atomic artifact writes clean up temporary files if final rename fails.
 const atomicDir = join(tmp, 'atomic-write-case');
 await mkdir(atomicDir, { recursive: true });
 await writeFileAtomic(atomicDir, 'cannot replace directory')
