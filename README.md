@@ -49,7 +49,8 @@ Result:
 ### Commands
 
 ```text
-/workflow-status                  # list runs from this Pi process
+/workflow-status                  # list recent runs from this Pi process
+/workflow-status --limit 100      # list up to N recent runs with status counts
 /workflow-status <id-prefix>      # detailed status
 /workflow-result <id-prefix>      # show final result / current snapshot
 /workflow-summary <id-prefix>     # one-shot diagnostic summary

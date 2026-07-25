@@ -82,6 +82,8 @@ if (activeAfter.length !== 0) throw new Error(`provider should have no active it
 const statusTool = tools.get('workflow_status');
 const statusResult = await statusTool.execute('status-1', { id: runId }, undefined, undefined, {});
 if (!statusResult.content[0].text.includes(runId)) throw new Error('workflow_status did not include run id');
+const statusListResult = await statusTool.execute('status-list', { limit: 1 }, undefined, undefined, {});
+if (!statusListResult.content[0].text.includes('Background workflows (')) throw new Error('workflow_status list did not include count header');
 
 const resultTool = tools.get('workflow_result');
 const resultResult = await resultTool.execute('result-1', { id: runId }, undefined, undefined, {});

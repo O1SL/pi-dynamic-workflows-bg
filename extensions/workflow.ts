@@ -108,9 +108,12 @@ export default function extension(pi: ExtensionAPI) {
     name: "workflow_status",
     label: "Workflow Status",
     description: "List background workflows or inspect one background workflow by id/prefix.",
-    parameters: Type.Object({ id: Type.Optional(Type.String({ description: "Optional run id or prefix." })) }),
+    parameters: Type.Object({
+      id: Type.Optional(Type.String({ description: "Optional run id or prefix." })),
+      limit: Type.Optional(Type.Number({ description: "Maximum runs to show when listing all workflows. Default 50." })),
+    }),
     async execute(_id, params) {
-      return { content: [{ type: "text", text: manager.formatStatus(params.id) }], details: { action: "status", id: params.id } };
+      return { content: [{ type: "text", text: manager.formatStatus(params.id, params.limit) }], details: { action: "status", id: params.id, limit: params.limit } };
     },
   }));
 
@@ -286,7 +289,7 @@ export default function extension(pi: ExtensionAPI) {
       if (params.all === true || !params.id?.trim()) {
         const sessionId = resolveWorkflowSessionId(ctx.sessionManager);
         await manager.waitForIdle(sessionId, params.timeoutMs);
-        return { content: [{ type: "text", text: manager.formatStatus() }], details: { action: "wait", all: true, sessionId, status: "idle" } as any };
+        return { content: [{ type: "text", text: manager.formatStatus(undefined, 50) }], details: { action: "wait", all: true, sessionId, status: "idle" } as any };
       }
       const run = await manager.waitForRun(params.id, params.timeoutMs);
       if (!run) {
@@ -312,9 +315,13 @@ export default function extension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("workflow-status", {
-    description: "Show background workflow status. Usage: /workflow-status [run-id-prefix]",
+    description: "Show background workflow status. Usage: /workflow-status [run-id-prefix] [--limit N]",
     handler: async (args, ctx) => {
-      ctx.ui.notify(manager.formatStatus(args.trim() || undefined), "info");
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const limitIndex = tokens.indexOf("--limit");
+      const limit = limitIndex >= 0 ? Number(tokens[limitIndex + 1]) : undefined;
+      const id = (limitIndex >= 0 ? tokens.filter((_, index) => index !== limitIndex && index !== limitIndex + 1) : tokens).join(" ") || undefined;
+      ctx.ui.notify(manager.formatStatus(id, limit), "info");
     },
   });
 

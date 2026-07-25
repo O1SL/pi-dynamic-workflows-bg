@@ -76,7 +76,7 @@ export interface BackgroundWorkflowManager {
   listWorktrees(idOrPrefix?: string): Array<{ runId: string; agentId: number; label: string; path: string; exists: boolean }>;
   cleanupWorktrees(idOrPrefix?: string, force?: boolean): Promise<{ removed: string[]; failed: Array<{ path: string; error: string }> }>;
   pruneRuns(options?: { olderThanDays?: number; keepLast?: number; dryRun?: boolean }): Promise<{ dryRun: boolean; candidates: string[]; removed: string[]; failed: Array<{ id: string; path: string; error: string }> }>;
-  formatStatus(idOrPrefix?: string): string;
+  formatStatus(idOrPrefix?: string, limit?: number): string;
   formatResult(idOrPrefix: string): string;
   formatTranscript(idOrPrefix: string, selector?: string | number, lines?: number): string;
   formatEvents(idOrPrefix: string, lines?: number): string;
@@ -662,7 +662,7 @@ export function createBackgroundWorkflowManager(
     return { dryRun, candidates: candidates.map((run) => run.id), removed, failed };
   };
 
-  const formatStatus = (idOrPrefix?: string) => {
+  const formatStatus = (idOrPrefix?: string, limit = 50) => {
     if (idOrPrefix?.trim()) {
       const run = get(idOrPrefix.trim());
       if (!run) return lookupError(idOrPrefix);
@@ -671,9 +671,12 @@ export function createBackgroundWorkflowManager(
     const all = list();
     if (all.length === 0) return "No background workflows in this session.";
     const counts = countRunsByStatus(all);
+    const safeLimit = Math.max(1, Math.floor(nonNegativeFiniteNumber(limit, "workflow status limit")));
+    const shown = all.slice(0, safeLimit);
     return [
       `Background workflows (${all.length}): running ${counts.running}, completed ${counts.completed}, failed ${counts.failed}, cancelled ${counts.cancelled}, interrupted ${counts.interrupted}`,
-      ...all.map((run) => `- ${formatRunStatus(run, false)}`),
+      ...(all.length > shown.length ? [`Showing ${shown.length}/${all.length} most recent workflow(s). Use a run id/prefix for detailed status.`] : []),
+      ...shown.map((run) => `- ${formatRunStatus(run, false)}`),
     ].join("\n");
   };
 

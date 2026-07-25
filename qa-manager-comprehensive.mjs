@@ -556,6 +556,10 @@ await writeFileAtomic(atomicDir, 'cannot replace directory')
 const atomicEntries = await readdir(tmp);
 assert(!atomicEntries.some((entry) => entry.includes('atomic-write-case.') && entry.endsWith('.tmp')), `atomic write left temporary files: ${atomicEntries.join(',')}`);
 
+// 23. Status listing limits output while preserving counts.
+const limitedStatus = manager.formatStatus(undefined, 2);
+assert(limitedStatus.includes('Showing 2/') && limitedStatus.split('\n').filter((line) => line.startsWith('- ')).length === 2, `limited status output mismatch: ${limitedStatus}`);
+
 console.log(JSON.stringify({
   ok: true,
   tmp,
