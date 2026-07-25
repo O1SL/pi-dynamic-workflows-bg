@@ -226,7 +226,50 @@ const modelRun = await manager.start({
 await manager.waitForRun(modelRun.id, 2000);
 assert(observedModel === 'provider/model-id', `agent model option was not passed through: ${observedModel}`);
 
-// 11. Restore historical runs and convert stale running records to interrupted.
+// 11. Retry with fallbackModels on retryable provider/model failures.
+const fallbackScript = `export const meta = { name: 'fallback_case', description: 'fallback case' }
+const result = await agent('fallback-check', { label: 'fallback child', model: 'primary/model', fallbackModels: ['fallback/model'] })
+return { result }
+`;
+const attemptedModels = [];
+const fallbackRun = await manager.start({
+  script: fallbackScript,
+  sessionId: 'session-fallback',
+  agent: {
+    async run(_prompt, opts) {
+      attemptedModels.push(opts.model ?? 'default');
+      if (opts.model === 'primary/model') throw new Error('429 provider resource unavailable');
+      return `fallback-ok:${opts.model}`;
+    },
+  },
+});
+await manager.waitForRun(fallbackRun.id, 2000);
+assert(fallbackRun.status === 'completed', `fallback run status ${fallbackRun.status}`);
+assert(attemptedModels.join(',') === 'primary/model,fallback/model', `fallback attempts mismatch: ${attemptedModels.join(',')}`);
+assert(fallbackRun.result?.result?.result === 'fallback-ok:fallback/model', 'fallback result mismatch');
+
+// 12. Non-retryable failures do not use fallbackModels.
+const nonRetryScript = `export const meta = { name: 'no_fallback_case', description: 'no fallback case' }
+const result = await agent('no-fallback-check', { label: 'no fallback child', model: 'primary/model', fallbackModels: ['fallback/model'] })
+return { result }
+`;
+const nonRetryModels = [];
+const nonRetryRun = await manager.start({
+  script: nonRetryScript,
+  sessionId: 'session-no-fallback',
+  agent: {
+    async run(_prompt, opts) {
+      nonRetryModels.push(opts.model ?? 'default');
+      throw new Error('deterministic validation failed');
+    },
+  },
+});
+await manager.waitForRun(nonRetryRun.id, 2000);
+assert(nonRetryRun.status === 'completed', `non-retry workflow status ${nonRetryRun.status}`);
+assert(nonRetryModels.join(',') === 'primary/model', `non-retry attempted fallback unexpectedly: ${nonRetryModels.join(',')}`);
+assert(nonRetryRun.result?.result?.result === null, 'non-retry failed branch should return null');
+
+// 13. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
 assert(restoredManager.get(success.id)?.status === 'completed', 'completed run not restored');
 const staleDir = join(tmp, '20990101000000-stale-case');

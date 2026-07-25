@@ -23,6 +23,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Concurrency | Implemented | `workflow` accepts `concurrency`. |
 | Per-child timeout | Implemented | `agent(..., { timeoutMs })` aborts slow child agents and returns `null` for that branch under existing failure semantics. |
 | Per-child model selection | Implemented | `agent(..., { model: "provider/model" })` is passed through and resolved against Pi's model registry when using real child sessions. |
+| Automatic fallback models | Implemented (basic) | `agent(..., { model, fallbackModels })` retries retryable provider/model failures with fallback models. Non-retryable failures do not retry. |
 | Child session persistence | Implemented | Child sessions are persisted in the run artifact directory and referenced in status/snapshot/events. |
 | Transcript inspection | Implemented | `workflow_transcript` reads persisted child sessions by run id and optional agent selector. |
 | Resume/revive after completion | Implemented (experimental) | `workflow_resume` reopens a persisted child session and sends a follow-up prompt. |
@@ -48,7 +49,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Supervisor/intercom | Requires a parent/child question channel and paused/detached run states comparable to `pi-subagents`. |
 | Full fleet view | Requires TUI state model, keyboard navigation, transcript panes, and active run tree rendering. |
 | Worktree isolation | Requires creating, routing, validating, and cleaning git worktrees for `agent(..., { isolation: "worktree" })`. |
-| Model fallback | Per-child model selection exists, but automatic fallback retry requires resolving alternate models and replaying child agent sessions on provider/model failures. |
+| Model fallback edge cases | Basic fallback exists, but advanced fallback policy parity with `pi-subagents` is not complete (e.g. provider-specific retry classification, fallback telemetry, and persisted attempt ledgers). |
 | Turn/tool budgets for child agents | `tokenBudget` exists at workflow level; per-child turn/tool budget requires deeper integration with Pi child sessions. |
 | Nested run tree | Workflow supports one level of `agent()` calls; nested workflow/subagent tracking is not represented as a tree. |
 | True workflow graph resume | Current `workflow_resume` resumes a child session, not the JS workflow VM from a checkpoint. |

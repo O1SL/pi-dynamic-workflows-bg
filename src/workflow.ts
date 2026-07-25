@@ -44,6 +44,7 @@ export interface AgentOptions<TSchemaDef extends TSchema | undefined = TSchema |
   phase?: string;
   schema?: TSchemaDef;
   model?: string;
+  fallbackModels?: string[];
   isolation?: "worktree";
   agentType?: string;
   timeoutMs?: number;
@@ -114,18 +115,34 @@ export async function runWorkflow<T = unknown>(
       try {
         throwIfAborted();
         const childSignal = createChildSignal(options.signal, normalizedOptions.timeoutMs);
-        const result = await agentRunner.run(taskPrompt, {
-          label,
-          schema: normalizedOptions.schema,
-          signal: childSignal,
-          model: normalizedOptions.model,
-          instructions: buildAgentInstructions(assignedPhase, normalizedOptions),
-          onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
-        } as any);
-        throwIfAborted();
-        state.spent += estimateTokens(result);
-        options.onAgentEnd?.({ label, phase: assignedPhase, result });
-        return result;
+        const modelsToTry = [normalizedOptions.model, ...(normalizedOptions.fallbackModels ?? [])];
+        let lastError: unknown;
+        for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
+          const model = modelsToTry[attempt];
+          try {
+            const result = await agentRunner.run(taskPrompt, {
+              label,
+              schema: normalizedOptions.schema,
+              signal: childSignal,
+              model,
+              instructions: buildAgentInstructions(assignedPhase, { ...normalizedOptions, model }),
+              onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
+            } as any);
+            lastError = undefined;
+            if (attempt > 0) log(`agent ${label} succeeded with fallback model ${model}`);
+            throwIfAborted();
+            state.spent += estimateTokens(result);
+            options.onAgentEnd?.({ label, phase: assignedPhase, result });
+            return result;
+          } catch (error) {
+            lastError = error;
+            if (options.signal?.aborted || childSignal?.aborted) throw error;
+            const hasFallback = attempt + 1 < modelsToTry.length;
+            if (!hasFallback || !isRetryableModelError(error)) throw error;
+            log(`agent ${label} failed with model ${model ?? "default"}; retrying fallback ${modelsToTry[attempt + 1]}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
       } catch (error) {
         if (options.signal?.aborted) throw error;
         log(`agent ${label} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -429,7 +446,16 @@ function normalizeAgentOptions(value: unknown): AgentOptions {
     isolation: options.isolation,
     agentType: optionalString(options.agentType, "agent type"),
     timeoutMs: optionalPositiveNumber(options.timeoutMs, "agent timeoutMs"),
+    fallbackModels: optionalStringArray((options as AgentOptions & { fallbackModels?: unknown }).fallbackModels, "agent fallbackModels"),
   };
+}
+
+function optionalStringArray(value: unknown, name: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new TypeError(`${name} must be an array of non-empty strings`);
+  }
+  return [...value];
 }
 
 function optionalPositiveNumber(value: unknown, name: string): number | undefined {
@@ -473,7 +499,13 @@ function buildAgentInstructions(phase: string | undefined, options: AgentOptions
   if (options.isolation) lines.push(`Requested isolation: ${options.isolation}`);
   if (options.model) lines.push(`Requested model: ${options.model}`);
   if (options.timeoutMs) lines.push(`Requested timeoutMs: ${options.timeoutMs}`);
+  if (options.fallbackModels?.length) lines.push(`Fallback models: ${options.fallbackModels.join(", ")}`);
   return lines.length ? lines.join("\n") : undefined;
+}
+
+function isRetryableModelError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(429|quota|rate.?limit|resource|capacity|overloaded|timeout|timed out|unavailable|provider|model|auth|api key|ECONNRESET|ETIMEDOUT|ENOTFOUND)\b/i.test(message);
 }
 
 function estimateTokens(value: unknown): number {
