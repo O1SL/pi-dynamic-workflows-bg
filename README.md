@@ -103,7 +103,7 @@ Available globals are the same as the upstream plugin: `agent`, `parallel`, `pip
 ## Notes
 
 - Background completion uses `pi.sendMessage({ customType: "background-workflow-result", ... }, { triggerTurn: true })`, not a UI-only custom entry. The result is visible to the parent model on the next turn.
-- If `pi-subagents` is installed, the extension registers a compatible `pi-subagents.background-work.v1` provider so `subagent_wait` can track active workflow runs as provider work.
+- The extension registers a best-effort compatible `pi-subagents.background-work.v1` provider. This works when both extensions share the same Pi extension realm (verified with explicit `-e` loading), but global package auto-loading can isolate realms enough that `subagent_wait` does not see workflow provider items. Completion messages remain model-visible either way.
 - Background progress is persisted to artifact files. Live inline tool streaming is only available in `foreground:true` mode.
 - Runs are in-memory for cancellation/status during the current Pi process. If Pi restarts, completed artifacts remain on disk, but running jobs are not resumed.
 - This fork intentionally keeps the original `workflow` tool name so existing prompts keep working, but changes the default mode to background.
@@ -118,7 +118,9 @@ npm run qa:smoke
 `qa:smoke` runs:
 
 1. `qa-smoke.mjs` — mock-agent background execution, notification callback, and artifact checks.
-2. `qa-extension-smoke.mjs` — extension registration, model-visible `sendMessage(... triggerTurn:true)` completion, and `pi-subagents.background-work.v1` provider checks.
+2. `qa-extension-smoke.mjs` — extension registration, model-visible `sendMessage(... triggerTurn:true)` completion, and same-realm `pi-subagents.background-work.v1` provider checks.
+
+`qa:full` additionally runs `qa-manager-comprehensive.mjs`, covering success, failure, no-agent validation, cancellation, concurrent id collision prevention, provider-active visibility, session-scoped wait, and artifact outputs.
 
 ## License
 
