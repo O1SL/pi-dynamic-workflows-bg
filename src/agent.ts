@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 import { createStructuredOutputTool, type StructuredOutputCapture } from "./structured-output.js";
+import { applyToolBudgetToTools, type AgentToolBudget } from "./tool-budget.js";
 
 export interface WorkflowAgentOptions {
   cwd?: string;
@@ -23,11 +24,7 @@ export interface WorkflowAgentOptions {
   instructions?: string;
 }
 
-export interface AgentToolBudget {
-  soft?: number;
-  hard: number;
-  block?: string[] | "*";
-}
+export type { AgentToolBudget } from "./tool-budget.js";
 
 export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefined> {
   label?: string;
@@ -64,7 +61,7 @@ export class WorkflowAgent {
     options: AgentRunOptions<TSchemaDef> = {},
   ): Promise<AgentRunResult<TSchemaDef>> {
     const capture: StructuredOutputCapture<any> = { called: false, value: undefined };
-    const customTools: ToolDefinition[] = this.applyToolBudget([...this.baseTools, ...(options.tools ?? [])], options.toolBudget);
+    const customTools: ToolDefinition[] = applyToolBudgetToTools([...this.baseTools, ...(options.tools ?? [])], options.toolBudget);
 
     if (options.schema) {
       customTools.push(createStructuredOutputTool({ schema: options.schema, capture }) as unknown as ToolDefinition);
@@ -115,7 +112,7 @@ export class WorkflowAgent {
   }
 
   async resume(prompt: string, sessionFile: string, options: AgentRunOptions = {}): Promise<string> {
-    const customTools: ToolDefinition[] = this.applyToolBudget([...this.baseTools, ...(options.tools ?? [])], options.toolBudget);
+    const customTools: ToolDefinition[] = applyToolBudgetToTools([...this.baseTools, ...(options.tools ?? [])], options.toolBudget);
     const agentDir = getAgentDir();
     const sessionManager = SessionManager.open(sessionFile, undefined, this.cwd);
     const model = this.resolveModel(options.model);
@@ -144,27 +141,6 @@ export class WorkflowAgent {
       removeAbortListener?.();
       session.dispose();
     }
-  }
-
-  private applyToolBudget(tools: ToolDefinition[], budget: AgentToolBudget | undefined): ToolDefinition[] {
-    if (!budget) return tools;
-    let count = 0;
-    const block = budget.block ?? "*";
-    const shouldBlock = (name: string) => block === "*" || block.includes(name);
-    return tools.map((tool) => ({
-      ...tool,
-      async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-        count++;
-        if (count > budget.hard && shouldBlock(tool.name)) {
-          return {
-            content: [{ type: "text", text: `Tool budget exceeded after ${budget.hard} tool call(s); blocked ${tool.name}.` }],
-            isError: true,
-            details: { toolBudgetExceeded: true, tool: tool.name, count, hard: budget.hard },
-          };
-        }
-        return tool.execute(toolCallId, params, signal, onUpdate, ctx);
-      },
-    })) as ToolDefinition[];
   }
 
   private resolveModel(spec: string | undefined): Model<Api> | undefined {

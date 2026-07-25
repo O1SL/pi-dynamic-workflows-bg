@@ -24,6 +24,8 @@ export {
   renderWorkflowText,
 } from "./display.js";
 export type { StructuredOutputCapture, StructuredOutputToolOptions } from "./structured-output.js";
+export type { AgentToolBudget, ToolBudgetState } from "./tool-budget.js";
+export { applyToolBudgetToTools } from "./tool-budget.js";
 export { createStructuredOutputTool } from "./structured-output.js";
 export type {
   AgentOptions,

@@ -22,7 +22,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Token budget | Implemented | `workflow` accepts `tokenBudget`; exhausted budgets fail subsequent `agent()` calls. |
 | Concurrency | Implemented | `workflow` accepts `concurrency`. |
 | Per-child timeout | Implemented | `agent(..., { timeoutMs })` aborts slow child agents and returns `null` for that branch under existing failure semantics. |
-| Per-child tool budget | Implemented (basic) | `agent(..., { toolBudget: { hard, block } })` wraps child tools and blocks configured tools after the hard limit. No soft nudge yet. |
+| Per-child tool budget | Implemented | `agent(..., { toolBudget: { soft, hard, block } })` wraps child tools, appends a model-visible soft nudge at the soft threshold, and blocks configured tools after the hard limit. |
 | Per-child model selection | Implemented | `agent(..., { model: "provider/model" })` is passed through and resolved against Pi's model registry when using real child sessions. |
 | Automatic fallback models | Implemented | `agent(..., { model, fallbackModels })` retries retryable provider/model failures with fallback models. Non-retryable failures do not retry. Attempts are recorded in status snapshot and `events.jsonl`. |
 | Worktree isolation | Implemented (basic) | `agent(..., { isolation: "worktree" })` creates a detached git worktree for real child sessions and records its path in status/events. | 
@@ -53,7 +53,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Full fleet view | Requires TUI state model, keyboard navigation, transcript panes, and active run tree rendering. |
 | Worktree merge lifecycle | Basic worktree creation/listing/cleanup exists. Automatic merge-back, dirty-state validation, and multi-worktree lifecycle policies are not implemented. |
 | Model fallback edge cases | Fallback retry and attempt ledger exist, but provider-specific retry classification and model-scope policy parity with `pi-subagents` are not complete. |
-| Per-child turn budget and soft tool-budget nudges | Hard tool-call blocking exists. Turn counting, soft nudges, and parity with `pi-subagents` budget state reporting are not implemented. |
+| Per-child turn budget and advanced budget state | Hard tool-call blocking and soft tool nudges exist. Turn counting and parity with `pi-subagents` budget state reporting are not implemented. |
 | Nested run tree | Workflow supports one level of `agent()` calls; nested workflow/subagent tracking is not represented as a tree. |
 | True workflow graph resume | Current `workflow_resume` resumes a child session, not the JS workflow VM from a checkpoint. |
 

@@ -25,7 +25,7 @@
     "test": "npm run check && npm run build && npm run test:unit",
     "test:unit": "tsx --test tests/**/*.test.ts",
     "qa:smoke": "npm run build && node qa-smoke.mjs && node qa-extension-smoke.mjs",
-    "qa:full": "npm run build && node qa-smoke.mjs && node qa-manager-comprehensive.mjs && node qa-extension-smoke.mjs",
+    "qa:full": "npm run build && node qa-smoke.mjs && node qa-tool-budget.mjs && node qa-manager-comprehensive.mjs && node qa-extension-smoke.mjs",
     "check": "biome check .",
     "format": "biome format --write .",
     "lint": "biome lint .",
