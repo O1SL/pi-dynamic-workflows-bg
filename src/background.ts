@@ -78,6 +78,7 @@ export interface BackgroundWorkflowManager {
   formatResult(idOrPrefix: string): string;
   formatTranscript(idOrPrefix: string, selector?: string | number, lines?: number): string;
   formatEvents(idOrPrefix: string, lines?: number): string;
+  formatSummary(idOrPrefix: string): string;
 }
 
 function defaultRunsRoot(): string {
@@ -503,7 +504,13 @@ export function createBackgroundWorkflowManager(
     return formatRunEvents(run, lines);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, listWorktrees, cleanupWorktrees, formatStatus, formatResult, formatTranscript, formatEvents };
+  const formatSummary = (idOrPrefix: string) => {
+    const run = get(idOrPrefix.trim());
+    if (!run) return `No background workflow found for: ${idOrPrefix}`;
+    return formatRunSummary(run);
+  };
+
+  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, listWorktrees, cleanupWorktrees, formatStatus, formatResult, formatTranscript, formatEvents, formatSummary };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {
@@ -546,6 +553,47 @@ function selectTranscriptAgent(run: BackgroundWorkflowRun, selector?: string | n
     }
   }
   return agent;
+}
+
+export function formatRunSummary(run: BackgroundWorkflowRun): string {
+  const failedAgents = run.snapshot.agents.filter((agent) => agent.status === "error");
+  const skippedAgents = run.snapshot.agents.filter((agent) => agent.status === "skipped");
+  const sessionAgents = run.snapshot.agents.filter((agent) => agent.sessionFile);
+  const worktreeAgents = run.snapshot.agents.filter((agent) => agent.worktreePath);
+  const attemptAgents = run.snapshot.agents.filter((agent) => agent.attempts?.length);
+  const nextActions: string[] = [];
+  if (run.status === "running") nextActions.push(`Use workflow_wait with id ${run.id} to wait for completion, or workflow_cancel to stop it.`);
+  if (run.status === "failed") nextActions.push(`Use workflow_events ${run.id} and workflow_transcript ${run.id} to inspect the failure.`);
+  if (sessionAgents.length > 0) nextActions.push(`Use workflow_transcript ${run.id} to inspect child session transcripts.`);
+  if (sessionAgents.length > 0 && run.status !== "running") nextActions.push(`Use workflow_resume ${run.id} with a follow-up prompt to continue a child session.`);
+  if (worktreeAgents.length > 0) nextActions.push(`Use workflow_worktrees ${run.id} to inspect isolated worktrees; use workflow_worktree_cleanup when done.`);
+  if (nextActions.length === 0) nextActions.push("No follow-up action is required unless the result needs further review.");
+
+  return [
+    `Workflow summary: ${run.id}`,
+    `Name: ${run.name}`,
+    `Status: ${run.status}`,
+    `Description: ${run.description}`,
+    `Started: ${run.startedAt}`,
+    `Updated: ${run.updatedAt}`,
+    ...(run.completedAt ? [`Completed: ${run.completedAt}`] : []),
+    `Artifacts: ${run.artifactDir}`,
+    `Output: ${run.outputPath}`,
+    `Events: ${run.eventsPath}`,
+    `Result: ${run.resultPath}`,
+    "",
+    `Agents: ${run.snapshot.doneCount}/${run.snapshot.agentCount} done, ${run.snapshot.runningCount} running, ${run.snapshot.errorCount} errors`,
+    ...(failedAgents.length ? [`Failed agents: ${failedAgents.map((agent) => `#${agent.id} ${agent.label}`).join(", ")}`] : []),
+    ...(skippedAgents.length ? [`Skipped agents: ${skippedAgents.map((agent) => `#${agent.id} ${agent.label}`).join(", ")}`] : []),
+    ...(sessionAgents.length ? [`Child sessions: ${sessionAgents.map((agent) => `#${agent.id} ${agent.label} -> ${agent.sessionFile}`).join("; ")}`] : []),
+    ...(worktreeAgents.length ? [`Worktrees: ${worktreeAgents.map((agent) => `#${agent.id} ${agent.label} -> ${agent.worktreePath}`).join("; ")}`] : []),
+    ...(attemptAgents.length ? [`Model attempts: ${attemptAgents.map((agent) => `#${agent.id} ${agent.label}: ${agent.attempts?.map((attempt) => `${attempt.model ?? "default"}:${attempt.status}`).join(" -> ")}`).join("; ")}`] : []),
+    ...(run.error ? [`Error: ${run.error}`] : []),
+    ...(run.result ? ["", "Result preview:", JSON.stringify(run.result.result, null, 2).slice(0, 4000)] : []),
+    "",
+    "Suggested next actions:",
+    ...nextActions.map((action) => `- ${action}`),
+  ].join("\n");
 }
 
 export function formatRunEvents(run: BackgroundWorkflowRun, lines = 120): string {

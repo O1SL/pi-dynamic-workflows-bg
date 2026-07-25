@@ -134,6 +134,16 @@ export default function extension(pi: ExtensionAPI) {
   }));
 
   pi.registerTool(defineTool({
+    name: "workflow_summary",
+    label: "Workflow Summary",
+    description: "Summarize a background workflow run with status, artifacts, result preview, child sessions, worktrees, model attempts, and suggested next actions.",
+    parameters: Type.Object({ id: Type.String({ description: "Run id or prefix." }) }),
+    async execute(_id, params) {
+      return { content: [{ type: "text", text: manager.formatSummary(params.id) }], details: { action: "summary", id: params.id } };
+    },
+  }));
+
+  pi.registerTool(defineTool({
     name: "workflow_events",
     label: "Workflow Events",
     description: "Read lifecycle events for a background workflow by run id/prefix.",
@@ -266,6 +276,18 @@ export default function extension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-summary", {
+    description: "Summarize a background workflow run. Usage: /workflow-summary <run-id-prefix>",
+    handler: async (args, ctx) => {
+      const id = args.trim();
+      if (!id) {
+        ctx.ui.notify("Usage: /workflow-summary <run-id-prefix>", "error");
+        return;
+      }
+      ctx.ui.notify(manager.formatSummary(id), "info");
+    },
+  });
+
   pi.registerCommand("workflow-events", {
     description: "Show lifecycle events for a background workflow. Usage: /workflow-events <run-id-prefix>",
     handler: async (args, ctx) => {
@@ -328,7 +350,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_resume", "workflow_cancel", "workflow_wait"];
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_summary", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_resume", "workflow_cancel", "workflow_wait"];
     const next = [...active];
     for (const tool of requiredTools) {
       if (!next.includes(tool)) next.push(tool);

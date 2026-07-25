@@ -59,6 +59,8 @@ if (!successEvents.includes('workflow.started') || !successEvents.includes('work
 }
 const formattedEvents = manager.formatEvents(success.id, 10);
 assert(formattedEvents.includes('workflow.started') && formattedEvents.includes('workflow.completed'), 'formatEvents missing lifecycle entries');
+const summary = manager.formatSummary(success.id);
+assert(summary.includes('Workflow summary') && summary.includes('Suggested next actions') && summary.includes(success.outputPath), 'formatSummary missing expected content');
 const fakeSessionFile = join(success.artifactDir, 'fake-child-session.jsonl');
 await writeFile(fakeSessionFile, [
   JSON.stringify({ type: 'session', id: 'fake', version: 3, timestamp: new Date().toISOString(), cwd: process.cwd() }),

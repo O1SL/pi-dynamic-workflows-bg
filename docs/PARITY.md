@@ -10,7 +10,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Foreground compatibility | Implemented | `foreground:true` preserves the original blocking workflow behavior. |
 | Model-visible completion | Implemented | Completion uses `pi.sendMessage(..., { triggerTurn: true })`, so the parent model can consume results. |
 | Native wait | Implemented | `workflow_wait` waits for one workflow and returns its result. Use this instead of relying on `subagent_wait`. |
-| Native management tools | Implemented | `workflow_status`, `workflow_result`, `workflow_transcript`, `workflow_resume`, `workflow_cancel`, `workflow_wait`. |
+| Native management tools | Implemented | `workflow_status`, `workflow_result`, `workflow_summary`, `workflow_transcript`, `workflow_events`, `workflow_worktrees`, `workflow_worktree_cleanup`, `workflow_resume`, `workflow_cancel`, `workflow_wait`. |
 | Human slash commands | Implemented | `/workflow-status`, `/workflow-result`, `/workflow-transcript`, `/workflow-resume`, `/workflow-cancel`. |
 | Artifacts | Implemented | Each run writes `status.json`, `events.jsonl`, `output.md`, `result.json`, and child sessions under `sessions/`. |
 | Durable run registry/recovery | Implemented (basic) | On extension load, historical `status.json` files are restored. Stale `running` runs from old processes become `interrupted`. |
@@ -42,7 +42,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | `subagent_wait` provider integration | Best effort | Same-realm explicit loading can track workflow provider items. Global package auto-loading can isolate realms; use `workflow_wait` for reliable waits. |
 | Cross-restart history access | Partial | Completed/interrupted runs restore into a new manager. Running work cannot resume after process exit. |
 | Resume/revive | Partial | `workflow_resume` can continue a persisted child session after completion/failure. It does not restart the original workflow graph or update the original workflow result. |
-| Live inspection | Partial | `workflow_status`, `workflow_result`, and `workflow_transcript` provide textual inspection; no fleet TUI yet. |
+| Live inspection | Partial | `workflow_status`, `workflow_result`, `workflow_summary`, `workflow_events`, and `workflow_transcript` provide textual inspection; no fleet TUI yet. |
 
 ## Not implemented yet
 
