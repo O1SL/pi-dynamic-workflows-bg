@@ -39,6 +39,7 @@ for (let i = 0; i < 100 && run.status === 'running'; i++) {
 }
 
 if (run.status !== 'completed') throw new Error(`expected completed, got ${run.status}: ${run.error}`);
+await manager.waitForRun(run.id, 2000);
 if (run.snapshot.agentCount !== 3) throw new Error(`expected 3 agents, got ${run.snapshot.agentCount}`);
 if (notifications.length !== 1) throw new Error(`expected 1 notification, got ${notifications.length}`);
 

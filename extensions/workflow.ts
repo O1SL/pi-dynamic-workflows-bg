@@ -44,25 +44,29 @@ function registerBackgroundWorkProvider(manager: ReturnType<typeof createBackgro
 }
 
 export default function extension(pi: ExtensionAPI) {
+  const sendWorkflowMessage = (message: string, details: Record<string, unknown>) => {
+    pi.sendMessage(
+      {
+        customType: "background-workflow-result",
+        content: message,
+        display: true,
+        details,
+      },
+      { triggerTurn: true },
+    );
+  };
+
   const manager = createBackgroundWorkflowManager({
     notify(message, run) {
-      pi.sendMessage(
-        {
-          customType: "background-workflow-result",
-          content: message,
-          display: true,
-          details: {
-            id: run.id,
-            name: run.name,
-            status: run.status,
-            artifactDir: run.artifactDir,
-            outputPath: run.outputPath,
-            resultPath: run.resultPath,
-            completedAt: run.completedAt,
-          },
-        },
-        { triggerTurn: true },
-      );
+      sendWorkflowMessage(message, {
+        id: run.id,
+        name: run.name,
+        status: run.status,
+        artifactDir: run.artifactDir,
+        outputPath: run.outputPath,
+        resultPath: run.resultPath,
+        completedAt: run.completedAt,
+      });
       pi.events.emit("background-workflow-result", {
         id: run.id,
         sessionId: run.sessionId,
@@ -70,6 +74,23 @@ export default function extension(pi: ExtensionAPI) {
         name: run.name,
         artifactDir: run.artifactDir,
       });
+    },
+    notifyBatch(message, runs) {
+      sendWorkflowMessage(message, {
+        batch: true,
+        ids: runs.map((run) => run.id),
+        status: runs.every((run) => run.status === "completed") ? "completed" : "mixed",
+        count: runs.length,
+      });
+      for (const run of runs) {
+        pi.events.emit("background-workflow-result", {
+          id: run.id,
+          sessionId: run.sessionId,
+          status: run.status,
+          name: run.name,
+          artifactDir: run.artifactDir,
+        });
+      }
     },
   });
 

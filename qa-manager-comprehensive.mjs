@@ -21,7 +21,10 @@ function makeManager(tmp, notifications = []) {
   return createBackgroundWorkflowManager({
     runsRoot: tmp,
     notify(message, run) {
-      notifications.push({ message, id: run.id, status: run.status, sessionId: run.sessionId });
+      notifications.push({ message, id: run.id, status: run.status, sessionId: run.sessionId, count: 1 });
+    },
+    notifyBatch(message, runs) {
+      notifications.push({ message, id: runs.map((run) => run.id).join(','), status: 'batch', count: runs.length });
     },
   });
 }
@@ -124,10 +127,12 @@ assert(c1.id !== c2.id, 'concurrent ids collided');
 await manager.waitForIdle('session-e', 2000);
 assert(c1.status === 'completed' && c2.status === 'completed', 'concurrent wait did not complete both');
 
-// 6. Notification coverage: success/fail/no-agent/cancel/concurrent x2.
-assert(notifications.length >= 6, `expected >=6 notifications, got ${notifications.length}`);
+// 6. Notification coverage: success/fail/no-agent/cancel/concurrent x2 with batching.
+const notifiedRunCount = notifications.reduce((total, n) => total + (n.count ?? 1), 0);
+assert(notifiedRunCount >= 6, `expected >=6 notified runs, got ${notifiedRunCount} across ${notifications.length} notification(s)`);
 assert(notifications.some((n) => n.status === 'failed'), 'no failed notification');
 assert(notifications.some((n) => n.status === 'cancelled'), 'no cancelled notification');
+assert(notifications.some((n) => n.status === 'batch' && n.count >= 2), 'no batched completion notification');
 
 // 7. Restore historical runs and convert stale running records to interrupted.
 const restoredManager = makeManager(tmp, []);
@@ -158,4 +163,5 @@ console.log(JSON.stringify({
   tmp,
   runs: manager.list().map((run) => ({ id: run.id, status: run.status, sessionId: run.sessionId })),
   notifications: notifications.length,
+  notifiedRunCount,
 }, null, 2));

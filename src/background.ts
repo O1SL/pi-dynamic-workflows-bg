@@ -53,7 +53,9 @@ export interface BackgroundWorkflowManagerOptions {
   runsRoot?: string;
   restore?: boolean;
   maxNotificationChars?: number;
+  notificationBatchMs?: number;
   notify?: (message: string, run: BackgroundWorkflowRun) => void | Promise<void>;
+  notifyBatch?: (message: string, runs: BackgroundWorkflowRun[]) => void | Promise<void>;
 }
 
 export interface BackgroundWorkflowManager {
@@ -83,8 +85,19 @@ export function createBackgroundWorkflowManager(
   const runs = new Map<string, BackgroundWorkflowRun>();
   const runsRoot = options.runsRoot ?? defaultRunsRoot();
   const maxNotificationChars = options.maxNotificationChars ?? DEFAULT_MAX_NOTIFICATION_CHARS;
+  const notificationBatchMs = Math.max(0, options.notificationBatchMs ?? 300);
+  const notifiedIds = new Set<string>();
+  const settledResolvers = new Map<string, () => void>();
+  let notificationBatch: BackgroundWorkflowRun[] = [];
+  let notificationBatchTimer: NodeJS.Timeout | undefined;
 
   const eventLine = (event: Omit<WorkflowEvent, "ts">) => `${JSON.stringify({ ...event, ts: new Date().toISOString() })}\n`;
+
+  const resolveRunSettled = (run: BackgroundWorkflowRun) => {
+    const resolveSettled = settledResolvers.get(run.id);
+    settledResolvers.delete(run.id);
+    resolveSettled?.();
+  };
 
   const appendEvent = async (run: BackgroundWorkflowRun, event: Omit<WorkflowEvent, "ts">) => {
     await mkdir(run.artifactDir, { recursive: true });
@@ -107,6 +120,53 @@ export function createBackgroundWorkflowManager(
     if (run.result) await writeFile(run.resultPath, JSON.stringify(run.result.result, null, 2), "utf8");
     const text = formatRunResult(run);
     await writeFile(run.outputPath, text, "utf8");
+  };
+
+  const flushNotificationBatch = async () => {
+    const batch = notificationBatch;
+    notificationBatch = [];
+    if (notificationBatchTimer) clearTimeout(notificationBatchTimer);
+    notificationBatchTimer = undefined;
+    if (batch.length === 0) return;
+    const pending = batch.filter((run) => !notifiedIds.has(run.id));
+    if (pending.length === 0) return;
+    for (const run of pending) {
+      notifiedIds.add(run.id);
+      run.notified = true;
+    }
+    try {
+      if (pending.length === 1) {
+        await options.notify?.(formatNotification(pending[0]!, maxNotificationChars), pending[0]!);
+      } else if (options.notifyBatch) {
+        await options.notifyBatch(formatNotificationBatch(pending, maxNotificationChars), pending);
+      } else {
+        await options.notify?.(formatNotificationBatch(pending, maxNotificationChars), pending[0]!);
+      }
+    } finally {
+      await Promise.allSettled(pending.map((run) => persist(run)));
+      for (const run of pending) resolveRunSettled(run);
+    }
+  };
+
+  const queueNotification = (run: BackgroundWorkflowRun) => {
+    if (notifiedIds.has(run.id) || run.notified) {
+      resolveRunSettled(run);
+      return;
+    }
+    notificationBatch.push(run);
+    if (notificationBatchMs === 0 || run.status !== "completed") {
+      void flushNotificationBatch().catch(() => {
+        for (const queued of notificationBatch.splice(0)) resolveRunSettled(queued);
+      });
+      return;
+    }
+    if (!notificationBatchTimer) {
+      notificationBatchTimer = setTimeout(() => {
+        void flushNotificationBatch().catch(() => {
+          for (const queued of notificationBatch.splice(0)) resolveRunSettled(queued);
+        });
+      }, notificationBatchMs);
+    }
   };
 
   const update = (run: BackgroundWorkflowRun) => {
@@ -156,6 +216,7 @@ export function createBackgroundWorkflowManager(
         };
         resolveSettled();
         runs.set(restored.id, restored);
+        if (restored.notified) notifiedIds.add(restored.id);
         if (raw.status === "running") {
           appendEventSync(restored, { type: "workflow.interrupted", id: restored.id });
           void persist(restored).catch(() => undefined);
@@ -197,6 +258,7 @@ export function createBackgroundWorkflowManager(
       settled,
     };
     runs.set(id, run);
+    settledResolvers.set(id, resolveSettled);
     await persist(run);
     appendEventSync(run, { type: "workflow.started", id: run.id, name: run.name, cwd: run.cwd });
 
@@ -269,17 +331,7 @@ export function createBackgroundWorkflowManager(
         update(run);
         await writeResultArtifacts(run).catch(() => undefined);
         await persist(run).catch(() => undefined);
-        try {
-          if (!run.notified) {
-            await options.notify?.(formatNotification(run, maxNotificationChars), run);
-            run.notified = true;
-            await persist(run).catch(() => undefined);
-          }
-        } catch {
-          // Completion notification is best-effort. Artifacts and status remain available.
-        } finally {
-          resolveSettled();
-        }
+        queueNotification(run);
       }
     })();
 
@@ -308,10 +360,12 @@ export function createBackgroundWorkflowManager(
   const waitForRun = async (idOrPrefix: string, timeoutMs = 30 * 60 * 1000) => {
     const run = get(idOrPrefix);
     if (!run) return undefined;
-    if (run.status !== "running") return run;
+    if (run.status !== "running") {
+      if (!run.notified && settledResolvers.has(run.id)) await run.settled;
+      return run;
+    }
     const timeout = new Promise<never>((_, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Timed out waiting for background workflow ${run.id}.`)), timeoutMs);
-      timer.unref?.();
+      setTimeout(() => reject(new Error(`Timed out waiting for background workflow ${run.id}.`)), timeoutMs);
     });
     await Promise.race([run.settled, timeout]);
     return run;
@@ -321,7 +375,10 @@ export function createBackgroundWorkflowManager(
     const deadline = Date.now() + timeoutMs;
     while (true) {
       const active = list().filter((run) => run.status === "running" && (!sessionId || run.sessionId === sessionId));
-      if (active.length === 0) return;
+      if (active.length === 0) {
+        await flushNotificationBatch();
+        return;
+      }
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error(`Timed out waiting for ${active.length} background workflow(s) to finish.`);
       await Promise.race([
@@ -395,6 +452,26 @@ export function formatNotification(run: BackgroundWorkflowRun, maxChars = DEFAUL
     renderWorkflowText(run.snapshot, run.status !== "running", { maxAgents: 12, maxLogs: 3 }),
     "",
     `Notification truncated by ${omitted} characters. Read the full result from output.md or call workflow_result with id ${run.id}.`,
+  ].join("\n");
+}
+
+export function formatNotificationBatch(runs: BackgroundWorkflowRun[], maxChars = DEFAULT_MAX_NOTIFICATION_CHARS): string {
+  const header = `Background workflows completed (${runs.length}): ${runs.map((run) => run.name).join(", ")}`;
+  const blocks = [header, ""];
+  for (const run of runs) {
+    const oneLine = `${run.id} [${run.status}] ${run.name} (${run.snapshot.doneCount}/${run.snapshot.agentCount} done)`;
+    blocks.push(`- ${oneLine}`);
+    if (run.error) blocks.push(`  Error: ${run.error}`);
+    if (run.result) blocks.push(`  Result: ${JSON.stringify(run.result.result)}`);
+    blocks.push(`  Output: ${run.outputPath}`);
+  }
+  const full = blocks.join("\n");
+  if (full.length <= maxChars) return full;
+  return [
+    header,
+    "",
+    `Batch notification truncated. ${runs.length} workflow(s) completed.`,
+    ...runs.map((run) => `- ${run.id} [${run.status}] ${run.name} · output: ${run.outputPath}`),
   ].join("\n");
 }
 
