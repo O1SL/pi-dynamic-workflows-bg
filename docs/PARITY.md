@@ -59,11 +59,11 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Nested run tree | Workflow supports one level of `agent()` calls; nested workflow/subagent tracking is not represented as a tree. |
 | True workflow graph resume | Current `workflow_resume` resumes a child session, not the JS workflow VM from a checkpoint. |
 
-## Recommended next implementation order
+## Remaining optional work
 
-1. Multi-resume QA and transcript-after-resume verification.
-2. Result/history restoration E2E after reload/new Pi process.
-3. Per-child budget and timeout options where Pi APIs allow it.
-4. Model fallback feasibility spike.
-5. Worktree isolation feasibility spike.
-6. TUI/fleet inspection only after core state model is stable.
+The core background workflow runtime is now intentionally stable and compact. Further work should be selective:
+
+1. Add more real-Pi E2E coverage after reload/new process when provider capacity is available.
+2. Improve live-steer acknowledgement only if Pi exposes a reliable delivery/recovery surface without duplicating `pi-subagents`.
+3. Consider a lightweight read-only fleet widget only if textual `workflow_status` / `workflow_summary` stops being sufficient.
+4. Keep true JS workflow graph checkpoint/resume, full supervisor/intercom, and automatic worktree merge-back as documented non-goals unless the architecture changes.
