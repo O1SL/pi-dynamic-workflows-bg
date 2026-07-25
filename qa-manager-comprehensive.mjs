@@ -58,6 +58,9 @@ const successEvents = await readFile(success.eventsPath, 'utf8');
 if (!successEvents.includes('workflow.started') || !successEvents.includes('workflow.completed') || !successEvents.includes('workflow.agent.started')) {
   throw new Error(`events artifact missing lifecycle events: ${successEvents}`);
 }
+const successGraph = success.snapshot.graph;
+assert(successGraph?.runId === success.id, 'workflow graph runId mismatch');
+assert(successGraph.nodes.some((node) => node.id === 'a1' && node.kind === 'agent' && node.status === 'done'), 'workflow graph missing first agent node');
 const formattedEvents = manager.formatEvents(success.id, 10);
 assert(formattedEvents.includes('workflow.started') && formattedEvents.includes('workflow.completed'), 'formatEvents missing lifecycle entries');
 const listStatus = manager.formatStatus();
@@ -73,6 +76,45 @@ await writeFile(fakeSessionFile, [
 success.snapshot.agents[0].sessionFile = fakeSessionFile;
 const transcript = manager.formatTranscript(success.id, 'mock success', 10);
 assert(transcript.includes('child transcript ok'), 'workflow transcript did not include child assistant text');
+
+const graphParallelScript = `export const meta = { name: 'graph_parallel_case', description: 'graph parallel case' }
+phase('Graph')
+await agent('first', { label: 'first graph' })
+await parallel([
+  () => agent('second', { label: 'second graph' }),
+  () => agent('third', { label: 'third graph' }),
+])
+return { ok: true }
+`;
+const graphParallel = await manager.start({
+  script: graphParallelScript,
+  sessionId: 'session-graph-parallel',
+  agent: { async run(prompt, opts) { return `${opts.label}:${prompt}`; } },
+});
+await manager.waitForRun(graphParallel.id, 2000);
+const graph = graphParallel.snapshot.graph;
+const parallelGroup = graph?.nodes.find((node) => node.kind === 'parallel');
+assert(parallelGroup?.status === 'done', 'workflow graph missing completed parallel group');
+assert(graph.nodes.some((node) => node.parentId === parallelGroup.id && node.label === 'second graph'), 'workflow graph missing parallel child parentId');
+assert(graph.edges.some((edge) => edge.from === 'a1' && edge.to === parallelGroup.id && edge.kind === 'seq'), 'workflow graph missing seq edge into parallel group');
+
+const graphPipelineScript = `export const meta = { name: 'graph_pipeline_case', description: 'graph pipeline case' }
+phase('Pipe')
+await pipeline(['one', 'two'],
+  (value) => agent('stage 1 ' + value, { label: 'stage1-' + value }),
+  (value, original, index) => agent('stage 2 ' + original, { label: 'stage2-' + original })
+)
+return { ok: true }
+`;
+const graphPipeline = await manager.start({
+  script: graphPipelineScript,
+  sessionId: 'session-graph-pipeline',
+  agent: { async run(prompt, opts) { return `${opts.label}:${prompt}`; } },
+});
+await manager.waitForRun(graphPipeline.id, 2000);
+const pipelineGroup = graphPipeline.snapshot.graph?.nodes.find((node) => node.kind === 'pipeline');
+assert(pipelineGroup?.status === 'done', 'workflow graph missing completed pipeline group');
+assert(graphPipeline.snapshot.graph.nodes.some((node) => node.parentId === pipelineGroup.id && node.pipelineCell?.stageIndex === 1 && node.pipelineCell?.itemLabel === 'one'), 'workflow graph missing pipeline cell metadata');
 
 // 2. Script failure path preserves artifacts and notifies model-visible layer.
 const failScript = `export const meta = { name: 'failure_case', description: 'failure case' }
@@ -292,6 +334,8 @@ assert(fallbackAttempts.length === 2, `expected 2 fallback attempts, got ${fallb
 assert(fallbackAttempts[0].status === 'failed' && fallbackAttempts[1].status === 'succeeded', 'fallback attempt ledger statuses mismatch');
 const fallbackEvents = await readFile(fallbackRun.eventsPath, 'utf8');
 assert(fallbackEvents.includes('workflow.agent.attempt') && fallbackEvents.includes('fallback/model'), 'fallback attempt events missing');
+const fallbackGraphNode = fallbackRun.snapshot.graph?.nodes.find((node) => node.label === 'fallback child');
+assert(fallbackGraphNode?.attempts?.length === 2 && fallbackGraphNode.usage?.model === 'fallback/model', 'fallback graph attempt metadata missing');
 
 // 12. Retryable provider/model failures retry the same agent branch before returning null.
 const retryScript = `export const meta = { name: 'retry_case', description: 'retry case' }
@@ -364,6 +408,7 @@ const worktreePath = worktreeRun.snapshot.agents[0]?.worktreePath;
 assert(worktreePath && existsSync(worktreePath), `worktree path missing: ${worktreePath}`);
 const worktreeEvents = await readFile(worktreeRun.eventsPath, 'utf8');
 assert(worktreeEvents.includes('workflow.agent.worktree'), 'worktree event missing');
+assert(worktreeRun.snapshot.graph?.nodes.some((node) => node.worktreePath === worktreePath), 'worktree path missing from workflow graph');
 const listedWorktrees = manager.listWorktrees(worktreeRun.id);
 assert(listedWorktrees.length === 1 && listedWorktrees[0].exists, 'listWorktrees did not report created worktree');
 await writeFile(join(worktreePath, 'dirty.txt'), 'dirty change\n');

@@ -93,6 +93,8 @@ Artifacts are written to:
 └── sessions/
 ```
 
+`status.json.snapshot.graph` and foreground `details.graph` include a best-effort display graph for pi-web. The graph is derived from runtime-known data only: agent nodes, phases/status, retry attempts, tool/session/worktree metadata, simple seq edges, and `parallel()` / `pipeline()` groups. It is not a full control-flow DAG and does not require workflow authors to write graph annotations.
+
 ## Foreground escape hatch
 
 The tool schema includes:

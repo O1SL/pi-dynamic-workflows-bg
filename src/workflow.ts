@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,7 +33,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   signal?: AbortSignal;
   onLog?: (message: string) => void;
   onPhase?: (title: string) => void;
-  onAgentStart?: (event: { label: string; phase?: string; prompt: string }) => void;
+  onAgentStart?: (event: { label: string; phase?: string; prompt: string; parentId?: string; pipelineCell?: { itemIndex: number; stageIndex: number; itemLabel?: string } }) => void;
   onAgentEnd?: (event: { label: string; phase?: string; result: unknown }) => void;
   onAgentSession?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
   onAgentWorktree?: (event: { label: string; phase?: string; worktreePath: string }) => void;
@@ -40,6 +41,8 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onAgentToolBudget?: (event: { label: string; phase?: string } & ToolBudgetEvent) => void;
   onAgentLiveSession?: (event: { label: string; phase?: string; session: any; sessionFile?: string }) => void;
   onAgentLiveSessionEnd?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
+  onGraphGroupStart?: (event: { id: string; label: string; kind: "parallel" | "pipeline"; phase?: string }) => void;
+  onGraphGroupEnd?: (event: { id: string; status: "done" | "error" }) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -71,7 +74,13 @@ interface RuntimeState {
   logs: string[];
   phases: string[];
   agentCount: number;
+  graphGroupCount: number;
   spent: number;
+}
+
+interface GraphRuntimeContext {
+  parentId?: string;
+  pipelineCell?: { itemIndex: number; stageIndex: number; itemLabel?: string };
 }
 
 type AnyNode = Node & { [key: string]: any; start: number; end: number };
@@ -85,7 +94,7 @@ export async function runWorkflow<T = unknown>(
 ): Promise<WorkflowRunResult<T>> {
   const started = Date.now();
   const { meta, body } = parseWorkflowScript(script);
-  const state: RuntimeState = { logs: [], phases: [], agentCount: 0, spent: 0 };
+  const state: RuntimeState = { logs: [], phases: [], agentCount: 0, graphGroupCount: 0, spent: 0 };
   const agentRunner = options.agent ?? new WorkflowAgent(options);
   const concurrency = Math.max(
     1,
@@ -93,6 +102,7 @@ export async function runWorkflow<T = unknown>(
   );
   const limiter = createLimiter(concurrency);
   const pendingAgentRuns = new Set<Promise<unknown>>();
+  const graphContext = new AsyncLocalStorage<GraphRuntimeContext>();
 
   const log = (message: string) => {
     const text = String(message);
@@ -127,7 +137,8 @@ export async function runWorkflow<T = unknown>(
     const run = limiter(async () => {
       state.agentCount++;
       const label = requestedLabel || defaultAgentLabel(assignedPhase, state.agentCount);
-      options.onAgentStart?.({ label, phase: assignedPhase, prompt: taskPrompt });
+      const context = graphContext.getStore();
+      options.onAgentStart?.({ label, phase: assignedPhase, prompt: taskPrompt, parentId: context?.parentId, pipelineCell: context?.pipelineCell });
       try {
         throwIfAborted();
         const childSignal = createChildSignal(options.signal, normalizedOptions.timeoutMs);
@@ -208,17 +219,24 @@ export async function runWorkflow<T = unknown>(
     if (thunks.some((thunk) => typeof thunk !== "function")) {
       throw new TypeError("parallel() expects an array of functions, not promises. Wrap each call: () => agent(...)");
     }
-    return Promise.all(
+    const id = nextGraphGroupId(state);
+    const phaseForGroup = state.currentPhase;
+    options.onGraphGroupStart?.({ id, label: `parallel ×${thunks.length}`, kind: "parallel", phase: phaseForGroup });
+    let hadError = false;
+    const result = await Promise.all(
       thunks.map(async (thunk, index) => {
         try {
-          return await thunk();
+          return await graphContext.run({ parentId: id }, thunk);
         } catch (error) {
           if (options.signal?.aborted) throw error;
+          hadError = true;
           log(`parallel[${index}] failed: ${error instanceof Error ? error.message : String(error)}`);
           return null;
         }
       }),
     );
+    options.onGraphGroupEnd?.({ id, status: hadError ? "error" : "done" });
+    return result;
   };
 
   const pipeline = async (
@@ -230,16 +248,22 @@ export async function runWorkflow<T = unknown>(
     if (stages.some((stage) => typeof stage !== "function")) {
       throw new TypeError("pipeline() stages must be functions: pipeline(items, item => ..., result => ...)");
     }
-    return Promise.all(
+    const id = nextGraphGroupId(state);
+    const phaseForGroup = state.currentPhase;
+    options.onGraphGroupStart?.({ id, label: `pipeline ${items.length}×${stages.length}`, kind: "pipeline", phase: phaseForGroup });
+    let hadError = false;
+    const result = await Promise.all(
       items.map(async (item, index) => {
         let value: unknown = item;
-        for (const stage of stages) {
+        for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
+          const stage = stages[stageIndex]!;
           try {
             throwIfAborted();
-            value = await stage(value, item, index);
+            value = await graphContext.run({ parentId: id, pipelineCell: { itemIndex: index, stageIndex, itemLabel: graphItemLabel(item, index) } }, () => stage(value, item, index));
             throwIfAborted();
           } catch (error) {
             if (options.signal?.aborted) throw error;
+            hadError = true;
             log(`pipeline[${index}] failed: ${error instanceof Error ? error.message : String(error)}`);
             return null;
           }
@@ -247,6 +271,8 @@ export async function runWorkflow<T = unknown>(
         return value;
       }),
     );
+    options.onGraphGroupEnd?.({ id, status: hadError ? "error" : "done" });
+    return result;
   };
 
   const context = vm.createContext({
@@ -449,6 +475,21 @@ function validateMeta(meta: unknown): asserts meta is WorkflowMeta {
       }
     }
   }
+}
+
+function nextGraphGroupId(state: RuntimeState): string {
+  state.graphGroupCount++;
+  return `g${state.graphGroupCount}`;
+}
+
+function graphItemLabel(item: unknown, index: number): string | undefined {
+  if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") return String(item);
+  if (item && typeof item === "object") {
+    const raw = item as Record<string, unknown>;
+    const candidate = raw.name ?? raw.label ?? raw.id;
+    if (typeof candidate === "string" || typeof candidate === "number") return String(candidate);
+  }
+  return `item ${index + 1}`;
 }
 
 function createLimiter(limit: number) {

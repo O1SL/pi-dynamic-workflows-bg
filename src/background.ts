@@ -7,10 +7,14 @@ import { promisify } from "node:util";
 import type { CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import { WorkflowAgent, type WorkflowAgentOptions } from "./agent.js";
 import {
+  agentStatusToGraphStatus,
   createWorkflowSnapshot,
+  ensureWorkflowGraph,
   preview,
   recomputeWorkflowSnapshot,
   renderWorkflowText,
+  updateWorkflowGraphNode,
+  upsertWorkflowGraphNode,
   type WorkflowSnapshot,
 } from "./display.js";
 import { parseWorkflowScript, runWorkflow, type WorkflowMeta, type WorkflowRunResult } from "./workflow.js";
@@ -253,7 +257,7 @@ export function createBackgroundWorkflowManager(
         resultPath: safeArtifactPath(artifactDir, raw.resultPath, "result.json"),
         statusPath,
         eventsPath: safeArtifactPath(artifactDir, raw.eventsPath, "events.jsonl"),
-        snapshot: raw.snapshot ?? createWorkflowSnapshot({ name: raw.name, description: raw.description ?? raw.name }),
+        snapshot: raw.snapshot ?? createWorkflowSnapshot({ name: raw.name, description: raw.description ?? raw.name }, raw.id),
         ...(raw.result ? { result: raw.result as WorkflowRunResult } : {}),
         ...(raw.error ? { error: raw.error } : status === "interrupted" ? { error: "Workflow was interrupted by process shutdown or reload." } : {}),
         notified: raw.notified ?? true,
@@ -347,7 +351,7 @@ export function createBackgroundWorkflowManager(
       resultPath: join(artifactDir, "result.json"),
       statusPath: join(artifactDir, "status.json"),
       eventsPath: join(artifactDir, "events.jsonl"),
-      snapshot: createWorkflowSnapshot(parsed.meta),
+      snapshot: createWorkflowSnapshot(parsed.meta, id),
       controller: new AbortController(),
       settled,
     };
@@ -378,15 +382,41 @@ export function createBackgroundWorkflowManager(
             appendEventSync(run, { type: "workflow.phase", title });
             update(run);
           },
+          onGraphGroupStart(event) {
+            if (!run.snapshot.phases.includes(event.phase ?? "") && event.phase) run.snapshot.phases.push(event.phase);
+            appendEventSync(run, { type: "workflow.graph.group_started", id: event.id, label: event.label, kind: event.kind, phase: event.phase });
+            upsertWorkflowGraphNode(run.snapshot, { id: event.id, kind: event.kind, label: event.label, phase: event.phase, status: "running" });
+            update(run);
+          },
+          onGraphGroupEnd(event) {
+            appendEventSync(run, { type: "workflow.graph.group_ended", id: event.id, status: event.status });
+            updateWorkflowGraphNode(run.snapshot, event.id, { status: event.status });
+            update(run);
+          },
           onAgentStart(event) {
             if (!run.snapshot.phases.includes(event.phase ?? "") && event.phase) run.snapshot.phases.push(event.phase);
             appendEventSync(run, { type: "workflow.agent.started", label: event.label, phase: event.phase, prompt: event.prompt });
+            const agentId = run.snapshot.agents.length + 1;
+            const startedAtMs = Date.now();
             run.snapshot.agents.push({
-              id: run.snapshot.agents.length + 1,
+              id: agentId,
               label: event.label,
               phase: event.phase,
               prompt: event.prompt,
               status: "running",
+              graphParentId: event.parentId,
+              pipelineCell: event.pipelineCell,
+              startedAtMs,
+            });
+            upsertWorkflowGraphNode(run.snapshot, {
+              id: `a${agentId}`,
+              kind: "agent",
+              label: event.label,
+              phase: event.phase,
+              parentId: event.parentId,
+              pipelineCell: event.pipelineCell,
+              status: "running",
+              usage: { durationMs: 0 },
             });
             update(run);
           },
@@ -410,6 +440,7 @@ export function createBackgroundWorkflowManager(
                 ...(event.type === "soft" ? { softReached: true } : agent.toolBudget?.softReached ? { softReached: true } : {}),
                 ...(event.type === "hard" ? { hardExceeded: true, tool: event.tool } : agent.toolBudget?.hardExceeded ? { hardExceeded: true, tool: agent.toolBudget.tool } : {}),
               };
+              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), toolCount: event.count } });
             }
             appendEventSync(run, { type: "workflow.agent.tool_budget", label: event.label, phase: event.phase, budgetEvent: event.type, tool: event.tool, count: event.count, hard: event.hard, soft: event.soft });
             update(run);
@@ -421,6 +452,7 @@ export function createBackgroundWorkflowManager(
             if (agent) {
               agent.attempts ??= [];
               agent.attempts.push({ model: event.model, attempt: event.attempt, status: event.status, ...(event.error ? { error: event.error } : {}) });
+              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { attempts: agent.attempts, usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), model: event.model } });
             }
             appendEventSync(run, { type: "workflow.agent.attempt", label: event.label, phase: event.phase, model: event.model, attempt: event.attempt, status: event.status, error: event.error });
             update(run);
@@ -429,7 +461,10 @@ export function createBackgroundWorkflowManager(
             const agent = [...run.snapshot.agents]
               .reverse()
               .find((item) => item.label === event.label && item.status === "running");
-            if (agent) agent.worktreePath = event.worktreePath;
+            if (agent) {
+              agent.worktreePath = event.worktreePath;
+              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { worktreePath: event.worktreePath });
+            }
             appendEventSync(run, { type: "workflow.agent.worktree", label: event.label, phase: event.phase, worktreePath: event.worktreePath });
             update(run);
           },
@@ -437,7 +472,10 @@ export function createBackgroundWorkflowManager(
             const agent = [...run.snapshot.agents]
               .reverse()
               .find((item) => item.label === event.label && item.status === "running");
-            if (agent && event.sessionFile) agent.sessionFile = event.sessionFile;
+            if (agent && event.sessionFile) {
+              agent.sessionFile = event.sessionFile;
+              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { sessionFile: event.sessionFile, artifactPath: event.sessionFile });
+            }
             appendEventSync(run, { type: "workflow.agent.session", label: event.label, phase: event.phase, sessionFile: event.sessionFile });
             update(run);
           },
@@ -448,6 +486,8 @@ export function createBackgroundWorkflowManager(
             if (agent) {
               agent.status = event.result === null ? "error" : "done";
               agent.resultPreview = preview(event.result);
+              agent.durationMs = agent.startedAtMs ? Date.now() - agent.startedAtMs : undefined;
+              updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { status: agentStatusToGraphStatus(agent.status), usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), durationMs: agent.durationMs } });
             }
             appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result), sessionFile: agent?.sessionFile, worktreePath: agent?.worktreePath });
             update(run);
@@ -471,6 +511,7 @@ export function createBackgroundWorkflowManager(
           if (agent.status === "running") {
             agent.status = run.status === "cancelled" ? "skipped" : "error";
             agent.error = run.error;
+            updateWorkflowGraphNode(run.snapshot, `a${agent.id}`, { status: agentStatusToGraphStatus(agent.status) });
           }
         }
       } finally {

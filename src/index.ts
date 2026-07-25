@@ -12,6 +12,11 @@ export type {
   WorkflowAgentStatus,
   WorkflowDisplay,
   WorkflowDisplayOptions,
+  WorkflowGraph,
+  WorkflowGraphEdge,
+  WorkflowGraphNode,
+  WorkflowGraphNodeKind,
+  WorkflowGraphNodeStatus,
   WorkflowSnapshot,
 } from "./display.js";
 export {

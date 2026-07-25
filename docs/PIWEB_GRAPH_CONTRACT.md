@@ -19,6 +19,10 @@ workflow-bg 侧认可这版 v2 的收敛方向：这是一个 **best-effort disp
 4. **`parallel()` / `pipeline()` 分组可以作为第二阶段增强**。它们是 workflow-bg 自己的 API，原则上比 if/for 更可控；但实现 parent/child 归属时要处理并发上下文，不是零成本，所以不建议作为第一阶段硬门槛。
 5. **pi-web 需要按渐进增强消费**：没有 `graph` 或 graph 字段不完整时继续 fallback；有基础 nodes 就画基础图；未来如果有分组/边/usage 再逐步增强。
 
+当前实现状态（workflow-bg）：**Phase 1 + Phase 2 已实现**。
+
+已实现内容：`snapshot.graph`、agent nodes、phase/status、attempts、tool count、duration/session/worktree metadata、best-effort `seq` edges，以及 `parallel()` / `pipeline()` group nodes with `parentId` / `pipelineCell`。仍然不实现 skipped branch、data edge、branchReason、AST 插桩或用户 graph API。
+
 推荐实施顺序：
 
 - **Phase 1：基础自动 graph**

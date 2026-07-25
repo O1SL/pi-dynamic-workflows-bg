@@ -2,11 +2,14 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
+  agentStatusToGraphStatus,
   createToolUpdateWorkflowDisplay,
   createWorkflowSnapshot,
   preview,
   recomputeWorkflowSnapshot,
   renderWorkflowText,
+  updateWorkflowGraphNode,
+  upsertWorkflowGraphNode,
   type WorkflowSnapshot,
 } from "./display.js";
 import type { BackgroundWorkflowManager } from "./background.js";
@@ -168,16 +171,87 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
             recordPhase(title);
             update();
           },
+          onGraphGroupStart(event) {
+            recordPhase(event.phase);
+            upsertWorkflowGraphNode(snapshot, { id: event.id, kind: event.kind, label: event.label, phase: event.phase, status: "running" });
+            update();
+          },
+          onGraphGroupEnd(event) {
+            updateWorkflowGraphNode(snapshot, event.id, { status: event.status });
+            update();
+          },
           onAgentStart(event) {
             if (signal?.aborted) throw new Error("Workflow was aborted");
             recordPhase(event.phase);
+            const id = snapshot.agents.length + 1;
+            const startedAtMs = Date.now();
             snapshot.agents.push({
-              id: snapshot.agents.length + 1,
+              id,
               label: event.label,
               phase: event.phase,
               prompt: event.prompt,
               status: "running",
+              graphParentId: event.parentId,
+              pipelineCell: event.pipelineCell,
+              startedAtMs,
             });
+            upsertWorkflowGraphNode(snapshot, {
+              id: `a${id}`,
+              kind: "agent",
+              label: event.label,
+              phase: event.phase,
+              parentId: event.parentId,
+              pipelineCell: event.pipelineCell,
+              status: "running",
+              usage: { durationMs: 0 },
+            });
+            update();
+          },
+          onAgentToolBudget(event) {
+            const agent = [...snapshot.agents]
+              .reverse()
+              .find((item) => item.label === event.label && item.status === "running");
+            if (agent) {
+              agent.toolBudget = {
+                count: event.count,
+                hard: event.hard,
+                ...(event.soft !== undefined ? { soft: event.soft } : {}),
+                ...(event.type === "soft" ? { softReached: true } : agent.toolBudget?.softReached ? { softReached: true } : {}),
+                ...(event.type === "hard" ? { hardExceeded: true, tool: event.tool } : agent.toolBudget?.hardExceeded ? { hardExceeded: true, tool: agent.toolBudget.tool } : {}),
+              };
+              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { usage: { ...(snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), toolCount: event.count } });
+            }
+            update();
+          },
+          onAgentAttempt(event) {
+            const agent = [...snapshot.agents]
+              .reverse()
+              .find((item) => item.label === event.label && item.status === "running");
+            if (agent) {
+              agent.attempts ??= [];
+              agent.attempts.push({ model: event.model, attempt: event.attempt, status: event.status, ...(event.error ? { error: event.error } : {}) });
+              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { attempts: agent.attempts, usage: { ...(snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), model: event.model } });
+            }
+            update();
+          },
+          onAgentSession(event) {
+            const agent = [...snapshot.agents]
+              .reverse()
+              .find((item) => item.label === event.label && item.status === "running");
+            if (agent && event.sessionFile) {
+              agent.sessionFile = event.sessionFile;
+              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { sessionFile: event.sessionFile, artifactPath: event.sessionFile });
+            }
+            update();
+          },
+          onAgentWorktree(event) {
+            const agent = [...snapshot.agents]
+              .reverse()
+              .find((item) => item.label === event.label && item.status === "running");
+            if (agent) {
+              agent.worktreePath = event.worktreePath;
+              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { worktreePath: event.worktreePath });
+            }
             update();
           },
           onAgentEnd(event) {
@@ -187,6 +261,8 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
             if (agent) {
               agent.status = event.result === null ? "error" : "done";
               agent.resultPreview = preview(event.result);
+              agent.durationMs = agent.startedAtMs ? Date.now() - agent.startedAtMs : undefined;
+              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { status: agentStatusToGraphStatus(agent.status), usage: { ...(snapshot.graph?.nodes.find((node) => node.id === `a${agent.id}`)?.usage ?? {}), durationMs: agent.durationMs } });
             }
             update();
           },
@@ -197,6 +273,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
             if (agent.status === "running") {
               agent.status = "skipped";
               agent.error = "aborted";
+              updateWorkflowGraphNode(snapshot, `a${agent.id}`, { status: "skipped" });
             }
           }
           snapshot = recomputeWorkflowSnapshot(snapshot);
