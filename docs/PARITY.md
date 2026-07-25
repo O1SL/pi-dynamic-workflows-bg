@@ -12,8 +12,8 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Native wait | Implemented | `workflow_wait` waits for one workflow and returns its result. Use this instead of relying on `subagent_wait`. |
 | Native management tools | Implemented | `workflow_status`, `workflow_result`, `workflow_summary`, `workflow_transcript`, `workflow_events`, `workflow_worktrees`, `workflow_worktree_cleanup`, `workflow_resume`, `workflow_cancel`, `workflow_wait`. |
 | Human slash commands | Implemented | `/workflow-status`, `/workflow-result`, `/workflow-transcript`, `/workflow-resume`, `/workflow-cancel`. |
-| Artifacts | Implemented | Each run writes `status.json`, `events.jsonl`, `output.md`, `result.json`, and child sessions under `sessions/`. |
-| Durable run registry/recovery | Implemented (basic) | On extension load, historical `status.json` files are restored. Stale `running` runs from old processes become `interrupted`. |
+| Artifacts | Implemented | Each run writes `status.json`, `events.jsonl`, `output.md`, `result.json`, and child sessions under `sessions/`. Key JSON/markdown artifacts are written via temp-file + atomic rename. |
+| Durable run registry/recovery | Implemented (basic) | On extension load, historical `status.json` files are restored. Status/result/summary/events/transcript lookups also lazy-load matching run artifacts from disk if the in-memory registry does not yet know them. Stale `running` runs from old processes become `interrupted`. |
 | Reconciliation | Implemented (basic) | `ownerPid` prevents current-process runs from being falsely marked interrupted; old running records are reconciled to interrupted. |
 | Events log | Implemented | `events.jsonl` records workflow lifecycle, phases, agent start/end/session/resume, completion/failure/cancel/interrupted. `workflow_events` and `/workflow-events` inspect it. |
 | Notification size limit | Implemented | Large model-visible notifications are truncated while full output remains in artifacts. |
@@ -34,7 +34,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Live steer running child | Implemented (experimental) | `workflow_steer` sends a steering message to a currently running child session when the live session handle is still available in the current process. |
 | Provider error propagation | Implemented | Child assistant messages ending with provider/tool errors now fail the workflow instead of returning empty text. |
 | CI | Implemented | GitHub Actions runs `npm ci`, `npm run qa:full`, and `npm pack --dry-run`. |
-| Local QA | Implemented | `qa:full` covers manager, extension, batching, recovery, artifacts, transcript, wait, cancel, failure, token budget, etc. |
+| Local QA | Implemented | `qa:full` covers manager, extension, batching, recovery, lazy disk run lookup, artifacts, transcript, wait, cancel, failure, token budget, etc. |
 | Real Pi E2E | Partially implemented | Verified background completion, failure, foreground mode, `workflow_wait`, `workflow_transcript`, and `workflow_resume` on installed package. |
 
 ## Best-effort / partial
@@ -42,7 +42,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Capability | Status | Notes |
 | --- | --- | --- |
 | `subagent_wait` provider integration | Best effort | Same-realm explicit loading can track workflow provider items. Global package auto-loading can isolate realms; use `workflow_wait` for reliable waits. |
-| Cross-restart history access | Partial | Completed/interrupted runs restore into a new manager. Running work cannot resume after process exit. |
+| Cross-restart history access | Partial | Completed/interrupted runs restore into a new manager, and artifact lookups can lazy-load matching runs written after manager construction. Running work cannot resume after process exit. |
 | Resume/revive | Partial | `workflow_resume` can continue a persisted child session after completion/failure. It does not restart the original workflow graph or update the original workflow result. |
 | Live inspection | Partial | `workflow_status`, `workflow_result`, `workflow_summary`, `workflow_events`, and `workflow_transcript` provide textual inspection; no fleet TUI yet. |
 

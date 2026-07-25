@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -87,7 +87,14 @@ function defaultRunsRoot(): string {
   return join(agentDir, "background-workflows", "runs");
 }
 
+async function writeFileAtomic(path: string, content: string): Promise<void> {
+  const tmp = `${path}.${process.pid}.${Date.now()}.${atomicWriteCounter++}.tmp`;
+  await writeFile(tmp, content, "utf8");
+  await rename(tmp, path);
+}
+
 const DEFAULT_MAX_NOTIFICATION_CHARS = 24_000;
+let atomicWriteCounter = 0;
 
 type WorkflowEvent = Record<string, unknown> & { type: string; ts: string };
 
@@ -125,14 +132,14 @@ export function createBackgroundWorkflowManager(
   const persist = async (run: BackgroundWorkflowRun) => {
     await mkdir(run.artifactDir, { recursive: true });
     const { controller: _controller, settled: _settled, ...serializable } = run;
-    await writeFile(run.statusPath, JSON.stringify(serializable, null, 2), "utf8");
+    await writeFileAtomic(run.statusPath, JSON.stringify(serializable, null, 2));
   };
 
   const writeResultArtifacts = async (run: BackgroundWorkflowRun) => {
     await mkdir(run.artifactDir, { recursive: true });
-    if (run.result) await writeFile(run.resultPath, JSON.stringify(run.result.result, null, 2), "utf8");
+    if (run.result) await writeFileAtomic(run.resultPath, JSON.stringify(run.result.result, null, 2));
     const text = formatRunResult(run);
-    await writeFile(run.outputPath, text, "utf8");
+    await writeFileAtomic(run.outputPath, text);
   };
 
   const flushNotificationBatch = async () => {
