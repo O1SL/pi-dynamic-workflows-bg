@@ -187,6 +187,25 @@ export default function extension(pi: ExtensionAPI) {
   }));
 
   pi.registerTool(defineTool({
+    name: "workflow_steer",
+    label: "Workflow Steer",
+    description: "Send a steering message to a currently running child agent in a background workflow. Experimental live-steer capability.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Run id or prefix." }),
+      prompt: Type.String({ description: "Steering message for the live child." }),
+      agent: Type.Optional(Type.String({ description: "Optional agent label substring or 1-based index." })),
+    }),
+    async execute(_id, params) {
+      try {
+        const text = await manager.steerChild(params.id, params.prompt, params.agent);
+        return { content: [{ type: "text", text }], details: { action: "steer", id: params.id, agent: params.agent } };
+      } catch (error) {
+        return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { action: "steer", id: params.id, agent: params.agent } };
+      }
+    },
+  }));
+
+  pi.registerTool(defineTool({
     name: "workflow_resume",
     label: "Workflow Resume",
     description: "Resume a persisted child agent session from a background workflow with a follow-up prompt. Experimental revive-style capability.",
@@ -318,6 +337,24 @@ export default function extension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-steer", {
+    description: "Steer a live child session. Usage: /workflow-steer <run-id-prefix> -- <steering prompt>",
+    handler: async (args, ctx) => {
+      const [idPart, ...rest] = args.split(/\s+--\s+/);
+      const id = idPart.trim();
+      const prompt = rest.join(" -- ").trim();
+      if (!id || !prompt) {
+        ctx.ui.notify("Usage: /workflow-steer <run-id-prefix> -- <steering prompt>", "error");
+        return;
+      }
+      try {
+        ctx.ui.notify(await manager.steerChild(id, prompt), "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
+  });
+
   pi.registerCommand("workflow-resume", {
     description: "Resume a child session. Usage: /workflow-resume <run-id-prefix> -- <follow-up prompt>",
     handler: async (args, ctx) => {
@@ -350,7 +387,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_summary", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_resume", "workflow_cancel", "workflow_wait"];
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_summary", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_steer", "workflow_resume", "workflow_cancel", "workflow_wait"];
     const next = [...active];
     for (const tool of requiredTools) {
       if (!next.includes(tool)) next.push(tool);

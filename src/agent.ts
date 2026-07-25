@@ -38,6 +38,8 @@ export interface AgentRunOptions<TSchemaDef extends TSchema | undefined = undefi
   instructions?: string;
   signal?: AbortSignal;
   onSession?: (info: { sessionFile?: string; label?: string }) => void;
+  onLiveSession?: (info: { session: any; sessionFile?: string; label?: string }) => void;
+  onLiveSessionEnd?: (info: { sessionFile?: string; label?: string }) => void;
   model?: string;
   toolBudget?: AgentToolBudget;
   turnBudget?: AgentTurnBudget;
@@ -90,6 +92,7 @@ export class WorkflowAgent {
     });
 
     options.onSession?.({ sessionFile: sessionManager.getSessionFile(), label: options.label });
+    options.onLiveSession?.({ session, sessionFile: sessionManager.getSessionFile(), label: options.label });
 
     let removeAbortListener: (() => void) | undefined;
     try {
@@ -116,6 +119,7 @@ export class WorkflowAgent {
       return this.lastAssistantText(session.messages) as AgentRunResult<TSchemaDef>;
     } finally {
       removeAbortListener?.();
+      options.onLiveSessionEnd?.({ sessionFile: sessionManager.getSessionFile(), label: options.label });
       session.dispose();
     }
   }
@@ -134,6 +138,7 @@ export class WorkflowAgent {
       ...this.sessionOptions,
       ...(model ? { model } : {}),
     });
+    options.onLiveSession?.({ session, sessionFile: sessionManager.getSessionFile(), label: options.label });
     let removeAbortListener: (() => void) | undefined;
     try {
       const assistantTurnsBefore = this.assistantTurnCount(session.messages);
@@ -150,6 +155,7 @@ export class WorkflowAgent {
       return this.lastAssistantText(session.messages);
     } finally {
       removeAbortListener?.();
+      options.onLiveSessionEnd?.({ sessionFile: sessionManager.getSessionFile(), label: options.label });
       session.dispose();
     }
   }

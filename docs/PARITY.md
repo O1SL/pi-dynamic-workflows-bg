@@ -31,6 +31,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Child session persistence | Implemented | Child sessions are persisted in the run artifact directory and referenced in status/snapshot/events. |
 | Transcript inspection | Implemented | `workflow_transcript` reads persisted child sessions by run id and optional agent selector. |
 | Resume/revive after completion | Implemented (experimental) | `workflow_resume` reopens a persisted child session and sends a follow-up prompt. |
+| Live steer running child | Implemented (experimental) | `workflow_steer` sends a steering message to a currently running child session when the live session handle is still available in the current process. |
 | Provider error propagation | Implemented | Child assistant messages ending with provider/tool errors now fail the workflow instead of returning empty text. |
 | CI | Implemented | GitHub Actions runs `npm ci`, `npm run qa:full`, and `npm pack --dry-run`. |
 | Local QA | Implemented | `qa:full` covers manager, extension, batching, recovery, artifacts, transcript, wait, cancel, failure, token budget, etc. |
@@ -49,7 +50,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 
 | Capability | Why not yet |
 | --- | --- |
-| Live steer of a running child | Requires holding live child session handles and a safe message injection channel while `agent()` is still executing. |
+| Live steer robustness | Basic live steer exists. It is current-process only, has no delivery acknowledgement protocol, no queued recovery after restart, and no supervisor UX comparable to `pi-subagents`. |
 | Supervisor/intercom | Requires a parent/child question channel and paused/detached run states comparable to `pi-subagents`. |
 | Full fleet view | Requires TUI state model, keyboard navigation, transcript panes, and active run tree rendering. |
 | Worktree merge lifecycle | Basic worktree creation/listing/cleanup exists. Automatic merge-back, dirty-state validation, and multi-worktree lifecycle policies are not implemented. |

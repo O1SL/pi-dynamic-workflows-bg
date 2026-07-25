@@ -72,6 +72,7 @@ export interface BackgroundWorkflowManager {
   waitForRun(idOrPrefix: string, timeoutMs?: number): Promise<BackgroundWorkflowRun | undefined>;
   waitForIdle(sessionId?: string, timeoutMs?: number): Promise<void>;
   resumeChild(idOrPrefix: string, prompt: string, selector?: string | number): Promise<string>;
+  steerChild(idOrPrefix: string, prompt: string, selector?: string | number): Promise<string>;
   listWorktrees(idOrPrefix?: string): Array<{ runId: string; agentId: number; label: string; path: string; exists: boolean }>;
   cleanupWorktrees(idOrPrefix?: string): Promise<{ removed: string[]; failed: Array<{ path: string; error: string }> }>;
   formatStatus(idOrPrefix?: string): string;
@@ -100,6 +101,7 @@ export function createBackgroundWorkflowManager(
   const notifiedIds = new Set<string>();
   const settledResolvers = new Map<string, () => void>();
   let notificationBatch: BackgroundWorkflowRun[] = [];
+  const liveSessions = new Map<string, { runId: string; label: string; sessionFile?: string; session: any }>();
   let notificationBatchTimer: NodeJS.Timeout | undefined;
 
   const eventLine = (event: Omit<WorkflowEvent, "ts">) => `${JSON.stringify({ ...event, ts: new Date().toISOString() })}\n`;
@@ -307,6 +309,14 @@ export function createBackgroundWorkflowManager(
             });
             update(run);
           },
+          onAgentLiveSession(event) {
+            liveSessions.set(liveKey(run.id, event.label), { runId: run.id, label: event.label, sessionFile: event.sessionFile, session: event.session });
+            appendEventSync(run, { type: "workflow.agent.live", label: event.label, phase: event.phase, sessionFile: event.sessionFile });
+          },
+          onAgentLiveSessionEnd(event) {
+            liveSessions.delete(liveKey(run.id, event.label));
+            appendEventSync(run, { type: "workflow.agent.live_end", label: event.label, phase: event.phase, sessionFile: event.sessionFile });
+          },
           onAgentToolBudget(event) {
             const agent = [...run.snapshot.agents]
               .reverse()
@@ -447,6 +457,8 @@ export function createBackgroundWorkflowManager(
     }
   };
 
+  const liveKey = (runId: string, label: string) => `${runId}\0${label}`;
+
   const resumeChild = async (idOrPrefix: string, prompt: string, selector?: string | number) => {
     const run = get(idOrPrefix.trim());
     if (!run) throw new Error(`No background workflow found for: ${idOrPrefix}`);
@@ -456,6 +468,20 @@ export function createBackgroundWorkflowManager(
     const result = await runner.resume(prompt, agent.sessionFile, { label: `resume ${agent.label}` });
     appendEventSync(run, { type: "workflow.agent.resumed", label: agent.label, sessionFile: agent.sessionFile, prompt, resultPreview: preview(result) });
     return result;
+  };
+
+  const steerChild = async (idOrPrefix: string, prompt: string, selector?: string | number) => {
+    const run = get(idOrPrefix.trim());
+    if (!run) throw new Error(`No background workflow found for: ${idOrPrefix}`);
+    const agent = selectTranscriptAgent(run, selector) ?? run.snapshot.agents[0];
+    if (!agent) throw new Error(`No child agent matched selector: ${selector ?? "(first)"}`);
+    const live = liveSessions.get(liveKey(run.id, agent.label));
+    if (!live) throw new Error(`Child agent is not currently live/running: ${agent.label}`);
+    if (typeof live.session.steer === "function") await live.session.steer(prompt);
+    else if (typeof live.session.sendUserMessage === "function") await live.session.sendUserMessage(prompt, { deliverAs: "steer" });
+    else throw new Error("Live child session does not support steering.");
+    appendEventSync(run, { type: "workflow.agent.steered", label: agent.label, sessionFile: live.sessionFile, prompt });
+    return `Steered live child ${agent.label} for workflow ${run.id}.`;
   };
 
   const listWorktrees = (idOrPrefix?: string) => {
@@ -526,7 +552,7 @@ export function createBackgroundWorkflowManager(
     return formatRunSummary(run);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, listWorktrees, cleanupWorktrees, formatStatus, formatResult, formatTranscript, formatEvents, formatSummary };
+  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, steerChild, listWorktrees, cleanupWorktrees, formatStatus, formatResult, formatTranscript, formatEvents, formatSummary };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {

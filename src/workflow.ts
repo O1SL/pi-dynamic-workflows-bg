@@ -38,6 +38,8 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onAgentWorktree?: (event: { label: string; phase?: string; worktreePath: string }) => void;
   onAgentAttempt?: (event: { label: string; phase?: string; model?: string; status: "failed" | "succeeded"; error?: string }) => void;
   onAgentToolBudget?: (event: { label: string; phase?: string } & ToolBudgetEvent) => void;
+  onAgentLiveSession?: (event: { label: string; phase?: string; session: any; sessionFile?: string }) => void;
+  onAgentLiveSessionEnd?: (event: { label: string; phase?: string; sessionFile?: string }) => void;
 }
 
 export interface WorkflowRunResult<T = unknown> {
@@ -147,6 +149,8 @@ export async function runWorkflow<T = unknown>(
               toolBudget: normalizedOptions.toolBudget,
               turnBudget: normalizedOptions.turnBudget,
               onToolBudgetEvent: (event: ToolBudgetEvent) => options.onAgentToolBudget?.({ label, phase: assignedPhase, ...event }),
+              onLiveSession: (info: { session: any; sessionFile?: string }) => options.onAgentLiveSession?.({ label, phase: assignedPhase, session: info.session, sessionFile: info.sessionFile }),
+              onLiveSessionEnd: (info: { sessionFile?: string }) => options.onAgentLiveSessionEnd?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
               instructions: buildAgentInstructions(assignedPhase, { ...normalizedOptions, model }),
               onSession: (info: { sessionFile?: string }) => options.onAgentSession?.({ label, phase: assignedPhase, sessionFile: info.sessionFile }),
             } as any);
