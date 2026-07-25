@@ -87,6 +87,16 @@ function defaultRunsRoot(): string {
   return join(agentDir, "background-workflows", "runs");
 }
 
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === "EPERM";
+  }
+}
+
 async function writeFileAtomic(path: string, content: string): Promise<void> {
   const tmp = `${path}.${process.pid}.${Date.now()}.${atomicWriteCounter++}.tmp`;
   await writeFile(tmp, content, "utf8");
@@ -204,7 +214,7 @@ export function createBackgroundWorkflowManager(
       const settled = new Promise<void>((resolve) => {
         resolveSettled = resolve;
       });
-      if (raw.status === "running" && raw.ownerPid === process.pid) return undefined;
+      if (raw.status === "running" && raw.ownerPid && isProcessAlive(raw.ownerPid)) return undefined;
       const status: BackgroundWorkflowStatus = raw.status === "running" ? "interrupted" : raw.status;
       const restored: BackgroundWorkflowRun = {
         id: raw.id,

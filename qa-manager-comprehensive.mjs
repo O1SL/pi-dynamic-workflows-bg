@@ -391,6 +391,28 @@ const restoredWithStale = makeManager(tmp, []);
 assert(restoredWithStale.get('20990101000000-stale-case')?.status === 'interrupted', 'stale running run not marked interrupted');
 assert(existsSync(join(staleDir, 'events.jsonl')), 'interrupted restore did not write events.jsonl');
 
+const aliveDir = join(tmp, '20990101000002-owned-running-case');
+await mkdir(aliveDir, { recursive: true });
+await writeFile(join(aliveDir, 'status.json'), JSON.stringify({
+  id: '20990101000002-owned-running-case',
+  name: 'owned_running_case',
+  description: 'running run owned by a live process',
+  status: 'running',
+  ownerPid: process.pid,
+  cwd: process.cwd(),
+  startedAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  artifactDir: aliveDir,
+  outputPath: join(aliveDir, 'output.md'),
+  resultPath: join(aliveDir, 'result.json'),
+  statusPath: join(aliveDir, 'status.json'),
+  eventsPath: join(aliveDir, 'events.jsonl'),
+  snapshot: { name: 'owned_running_case', description: 'running run owned by a live process', phases: [], logs: [], agents: [], agentCount: 0, runningCount: 0, doneCount: 0, errorCount: 0 },
+}, null, 2));
+const restoredWithLiveOwner = makeManager(tmp, []);
+assert(restoredWithLiveOwner.get('20990101000002-owned-running') === undefined, 'live owned running run should not be marked interrupted by another manager');
+assert(!existsSync(join(aliveDir, 'events.jsonl')), 'live owned running run should not receive interrupted events');
+
 // 18. Runs written after manager construction are lazily restored from disk by id/prefix lookups.
 const lazyManager = makeManager(tmp, []);
 const lazyDir = join(tmp, '20990101000001-lazy-case');

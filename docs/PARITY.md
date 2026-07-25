@@ -14,7 +14,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Human slash commands | Implemented | `/workflow-status`, `/workflow-result`, `/workflow-transcript`, `/workflow-resume`, `/workflow-cancel`. |
 | Artifacts | Implemented | Each run writes `status.json`, `events.jsonl`, `output.md`, `result.json`, and child sessions under `sessions/`. Key JSON/markdown artifacts are written via temp-file + atomic rename. |
 | Durable run registry/recovery | Implemented (basic) | On extension load, historical `status.json` files are restored. Status/result/summary/events/transcript lookups also lazy-load matching run artifacts from disk if the in-memory registry does not yet know them. Stale `running` runs from old processes become `interrupted`. |
-| Reconciliation | Implemented (basic) | `ownerPid` prevents current-process runs from being falsely marked interrupted; old running records are reconciled to interrupted. |
+| Reconciliation | Implemented (basic) | `ownerPid` plus process liveness checks prevent running workflows owned by a live process from being falsely marked interrupted; stale running records from dead/unknown owners are reconciled to interrupted. |
 | Events log | Implemented | `events.jsonl` records workflow lifecycle, phases, agent start/end/session/resume, completion/failure/cancel/interrupted. `workflow_events` and `/workflow-events` inspect it. |
 | Notification size limit | Implemented | Large model-visible notifications are truncated while full output remains in artifacts. |
 | Completion batching | Implemented | Completed workflows are batched over a short debounce window. Failures/cancellations flush immediately. |
@@ -42,7 +42,7 @@ This document tracks how `pi-dynamic-workflows-bg` compares to `pi-subagents` fo
 | Capability | Status | Notes |
 | --- | --- | --- |
 | `subagent_wait` provider integration | Best effort | Same-realm explicit loading can track workflow provider items. Global package auto-loading can isolate realms; use `workflow_wait` for reliable waits. |
-| Cross-restart history access | Partial | Completed/interrupted runs restore into a new manager, and artifact lookups can lazy-load matching runs written after manager construction. Running work cannot resume after process exit. |
+| Cross-restart history access | Partial | Completed/interrupted runs restore into a new manager, and artifact lookups can lazy-load matching runs written after manager construction. Running work owned by a live process is left alone; work whose owner is gone is marked interrupted rather than resumed. |
 | Resume/revive | Partial | `workflow_resume` can continue a persisted child session after completion/failure. It does not restart the original workflow graph or update the original workflow result. |
 | Live inspection | Partial | `workflow_status`, `workflow_result`, `workflow_summary`, `workflow_events`, and `workflow_transcript` provide textual inspection; no fleet TUI yet. |
 

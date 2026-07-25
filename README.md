@@ -118,7 +118,7 @@ See [`docs/PARITY.md`](docs/PARITY.md) for the detailed parity matrix versus `pi
 - The extension registers a best-effort compatible `pi-subagents.background-work.v1` provider. This works when both extensions share the same Pi extension realm (verified with explicit `-e` loading), but global package auto-loading can isolate realms enough that `subagent_wait` does not see workflow provider items. Completion messages remain model-visible either way.
 - Background progress is persisted to artifact files. Live inline tool streaming is only available in `foreground:true` mode.
 - `agent()` retries retryable provider/model failures once by default. Use `agent(..., { retry, retryDelayMs, fallbackModels })` to tune same-model retries and fallback model attempts.
-- Completed/failed/cancelled/interrupted runs are restored from disk, and status/result lookups can lazy-load matching run artifacts written by another manager instance. If Pi restarts while a run is active, that run is reconciled as `interrupted`; the JavaScript workflow VM itself is not resumed.
+- Completed/failed/cancelled/interrupted runs are restored from disk, and status/result lookups can lazy-load matching run artifacts written by another manager instance. Running records owned by a live process are left untouched; if Pi exits while a run is active, that run is reconciled as `interrupted`; the JavaScript workflow VM itself is not resumed.
 - This fork intentionally keeps the original `workflow` tool name so existing prompts keep working, but changes the default mode to background.
 
 ## QA
