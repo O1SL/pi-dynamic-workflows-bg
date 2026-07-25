@@ -234,7 +234,8 @@ export default function extension(pi: ExtensionAPI) {
     parameters: Type.Object({ id: Type.String({ description: "Run id or prefix." }) }),
     async execute(_id, params) {
       const ok = manager.cancel(params.id);
-      return { content: [{ type: "text", text: ok ? `Cancelled background workflow ${params.id}` : `No running workflow found for ${params.id}` }], details: { action: "cancel", id: params.id, cancelled: ok } };
+      const text = ok ? `Cancelled background workflow ${params.id}` : manager.formatStatus(params.id);
+      return { content: [{ type: "text", text }], isError: !ok, details: { action: "cancel", id: params.id, cancelled: ok, status: ok ? "cancelled" : text.startsWith("Ambiguous ") ? "ambiguous" : "not_running_or_not_found" } };
     },
   }));
 
@@ -387,7 +388,8 @@ export default function extension(pi: ExtensionAPI) {
         ctx.ui.notify("Usage: /workflow-cancel <run-id-prefix>", "error");
         return;
       }
-      ctx.ui.notify(manager.cancel(id) ? `Cancelled background workflow ${id}` : `No running workflow found for ${id}`, "info");
+      const ok = manager.cancel(id);
+      ctx.ui.notify(ok ? `Cancelled background workflow ${id}` : manager.formatStatus(id), ok ? "info" : "warning");
     },
   });
 

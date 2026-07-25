@@ -102,6 +102,7 @@ if (waitResult.details?.action !== 'wait' || waitResult.details?.found !== true)
 
 const cancelTool = tools.get('workflow_cancel');
 const cancelResult = await cancelTool.execute('cancel-1', { id: runId }, undefined, undefined, {});
-if (!cancelResult.content[0].text.includes('No running workflow')) throw new Error('workflow_cancel terminal-run response mismatch');
+if (!cancelResult.isError || !cancelResult.content[0].text.includes(runId)) throw new Error('workflow_cancel terminal-run diagnostic mismatch');
+if (cancelResult.details?.status !== 'not_running_or_not_found') throw new Error('workflow_cancel terminal-run details mismatch');
 
 console.log(JSON.stringify({ ok: true, runId, sent: { customType: sent.message.customType, triggerTurn: sent.options.triggerTurn }, wait: waitResult.details }, null, 2));
