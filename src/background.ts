@@ -33,6 +33,7 @@ export interface BackgroundWorkflowRun {
   result?: WorkflowRunResult;
   error?: string;
   controller: AbortController;
+  settled: Promise<void>;
 }
 
 export interface BackgroundWorkflowStartOptions extends WorkflowAgentOptions {
@@ -55,6 +56,7 @@ export interface BackgroundWorkflowManager {
   listActiveWork(): Array<{ id: string; sessionId: string }>;
   get(idOrPrefix: string): BackgroundWorkflowRun | undefined;
   cancel(idOrPrefix: string): boolean;
+  waitForIdle(sessionId?: string, timeoutMs?: number): Promise<void>;
   formatStatus(idOrPrefix?: string): string;
   formatResult(idOrPrefix: string): string;
 }
@@ -72,7 +74,7 @@ export function createBackgroundWorkflowManager(
 
   const persist = async (run: BackgroundWorkflowRun) => {
     await mkdir(run.artifactDir, { recursive: true });
-    const { controller: _controller, ...serializable } = run;
+    const { controller: _controller, settled: _settled, ...serializable } = run;
     await writeFile(run.statusPath, JSON.stringify(serializable, null, 2), "utf8");
   };
 
@@ -94,6 +96,10 @@ export function createBackgroundWorkflowManager(
     const parsed = parseWorkflowScript(script);
     const id = makeRunId(parsed.meta);
     const artifactDir = resolve(runsRoot, id);
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
     const run: BackgroundWorkflowRun = {
       id,
       name: parsed.meta.name,
@@ -109,6 +115,7 @@ export function createBackgroundWorkflowManager(
       statusPath: join(artifactDir, "status.json"),
       snapshot: createWorkflowSnapshot(parsed.meta),
       controller: new AbortController(),
+      settled,
     };
     runs.set(id, run);
     await persist(run);
@@ -176,7 +183,13 @@ export function createBackgroundWorkflowManager(
         update(run);
         await writeResultArtifacts(run).catch(() => undefined);
         await persist(run).catch(() => undefined);
-        await options.notify?.(formatRunResult(run), run);
+        try {
+          await options.notify?.(formatRunResult(run), run);
+        } catch {
+          // Completion notification is best-effort. Artifacts and status remain available.
+        } finally {
+          resolveSettled();
+        }
       }
     })();
 
@@ -202,6 +215,23 @@ export function createBackgroundWorkflowManager(
     return true;
   };
 
+  const waitForIdle = async (sessionId?: string, timeoutMs = 30 * 60 * 1000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      const active = list().filter((run) => run.status === "running" && (!sessionId || run.sessionId === sessionId));
+      if (active.length === 0) return;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`Timed out waiting for ${active.length} background workflow(s) to finish.`);
+      await Promise.race([
+        Promise.allSettled(active.map((run) => run.settled)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("wait timeout")), Math.min(remaining, 1000))),
+      ]).catch((error) => {
+        if (error instanceof Error && error.message === "wait timeout") return;
+        throw error;
+      });
+    }
+  };
+
   const formatStatus = (idOrPrefix?: string) => {
     if (idOrPrefix?.trim()) {
       const run = get(idOrPrefix.trim());
@@ -219,7 +249,7 @@ export function createBackgroundWorkflowManager(
     return formatRunResult(run);
   };
 
-  return { start, list, listActiveWork, get, cancel, formatStatus, formatResult };
+  return { start, list, listActiveWork, get, cancel, waitForIdle, formatStatus, formatResult };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {

@@ -129,6 +129,11 @@ export default function extension(pi: ExtensionAPI) {
     }
   });
 
+  pi.on("agent_end", async (_event, ctx) => {
+    if (ctx.hasUI) return;
+    await manager.waitForIdle(ctx.sessionManager.getSessionId());
+  });
+
   pi.on("session_shutdown", () => {
     disposeBackgroundWorkProvider?.();
   });
