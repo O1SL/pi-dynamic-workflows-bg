@@ -60,6 +60,12 @@ The model also gets explicit management tools so it can consume background resul
 ```text
 workflow_status                   # list or inspect runs
 workflow_result                   # read current/final result
+workflow_summary                  # one-shot diagnostics
+workflow_events                   # inspect events.jsonl
+workflow_transcript               # inspect child sessions
+workflow_worktrees                # list isolated worktrees
+workflow_worktree_cleanup         # clean workflow-created worktrees
+workflow_prune                    # dry-run/delete old terminal workflow artifacts
 workflow_cancel                   # cancel a running workflow
 workflow_wait                     # wait for one run and return its result
 ```
@@ -69,8 +75,10 @@ Artifacts are written to:
 ```text
 ~/.pi/agent/background-workflows/runs/<run-id>/
 ├── status.json
+├── events.jsonl
 ├── output.md
-└── result.json
+├── result.json
+└── sessions/
 ```
 
 ## Foreground escape hatch

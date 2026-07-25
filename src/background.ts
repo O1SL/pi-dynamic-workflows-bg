@@ -75,6 +75,7 @@ export interface BackgroundWorkflowManager {
   steerChild(idOrPrefix: string, prompt: string, selector?: string | number): Promise<string>;
   listWorktrees(idOrPrefix?: string): Array<{ runId: string; agentId: number; label: string; path: string; exists: boolean }>;
   cleanupWorktrees(idOrPrefix?: string, force?: boolean): Promise<{ removed: string[]; failed: Array<{ path: string; error: string }> }>;
+  pruneRuns(options?: { olderThanDays?: number; keepLast?: number; dryRun?: boolean }): Promise<{ dryRun: boolean; candidates: string[]; removed: string[]; failed: Array<{ id: string; path: string; error: string }> }>;
   formatStatus(idOrPrefix?: string): string;
   formatResult(idOrPrefix: string): string;
   formatTranscript(idOrPrefix: string, selector?: string | number, lines?: number): string;
@@ -609,6 +610,38 @@ export function createBackgroundWorkflowManager(
     return { removed, failed };
   };
 
+  const pruneRuns = async (pruneOptions: { olderThanDays?: number; keepLast?: number; dryRun?: boolean } = {}) => {
+    refreshRunsFromDisk();
+    const dryRun = pruneOptions.dryRun !== false;
+    const keepLast = Math.max(0, Math.floor(pruneOptions.keepLast ?? 100));
+    const olderThanDays = pruneOptions.olderThanDays;
+    const cutoffMs = olderThanDays === undefined ? undefined : Date.now() - Math.max(0, olderThanDays) * 24 * 60 * 60 * 1000;
+    const terminal = list()
+      .filter((run) => run.status !== "running")
+      .sort((a, b) => timestampOfRun(b) - timestampOfRun(a));
+    const keep = new Set(terminal.slice(0, keepLast).map((run) => run.id));
+    const candidates = terminal.filter((run) => {
+      if (keep.has(run.id)) return false;
+      if (cutoffMs === undefined) return true;
+      return timestampOfRun(run) <= cutoffMs;
+    });
+    const removed: string[] = [];
+    const failed: Array<{ id: string; path: string; error: string }> = [];
+    if (!dryRun) {
+      for (const run of candidates) {
+        try {
+          await rm(run.artifactDir, { recursive: true, force: true });
+          runs.delete(run.id);
+          notifiedIds.delete(run.id);
+          removed.push(run.id);
+        } catch (error) {
+          failed.push({ id: run.id, path: run.artifactDir, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    }
+    return { dryRun, candidates: candidates.map((run) => run.id), removed, failed };
+  };
+
   const formatStatus = (idOrPrefix?: string) => {
     if (idOrPrefix?.trim()) {
       const run = get(idOrPrefix.trim());
@@ -644,7 +677,12 @@ export function createBackgroundWorkflowManager(
     return formatRunSummary(run);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, steerChild, listWorktrees, cleanupWorktrees, formatStatus, formatResult, formatTranscript, formatEvents, formatSummary };
+  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, steerChild, listWorktrees, cleanupWorktrees, pruneRuns, formatStatus, formatResult, formatTranscript, formatEvents, formatSummary };
+}
+
+function timestampOfRun(run: BackgroundWorkflowRun): number {
+  const value = Date.parse(run.completedAt ?? run.updatedAt ?? run.startedAt);
+  return Number.isFinite(value) ? value : 0;
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {

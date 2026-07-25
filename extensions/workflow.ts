@@ -190,6 +190,30 @@ export default function extension(pi: ExtensionAPI) {
   }));
 
   pi.registerTool(defineTool({
+    name: "workflow_prune",
+    label: "Workflow Prune",
+    description: "Dry-run or remove old terminal workflow artifact directories. Defaults to dryRun:true and keepLast:100; running workflows are never pruned.",
+    parameters: Type.Object({
+      olderThanDays: Type.Optional(Type.Number({ description: "Only prune terminal runs older than this many days." })),
+      keepLast: Type.Optional(Type.Number({ description: "Always keep this many newest terminal runs. Default 100." })),
+      dryRun: Type.Optional(Type.Boolean({ description: "Preview only when true. Default true; pass false to delete candidate artifact directories." })),
+    }),
+    async execute(_id, params) {
+      const result = await manager.pruneRuns({ olderThanDays: params.olderThanDays, keepLast: params.keepLast, dryRun: params.dryRun });
+      const lines = [
+        `Workflow prune ${result.dryRun ? "dry run" : "completed"}.`,
+        `Candidates: ${result.candidates.length}`,
+        `Removed: ${result.removed.length}`,
+        `Failed: ${result.failed.length}`,
+        ...(result.candidates.length ? ["", "Candidate run ids:", ...result.candidates.slice(0, 50).map((id) => `- ${id}`)] : []),
+        ...(result.candidates.length > 50 ? [`... ${result.candidates.length - 50} more`] : []),
+        ...(result.failed.length ? ["", "Failures:", ...result.failed.map((item) => `- ${item.id}: ${item.error}`)] : []),
+      ];
+      return { content: [{ type: "text", text: lines.join("\n") }], details: { action: "prune", ...result } };
+    },
+  }));
+
+  pi.registerTool(defineTool({
     name: "workflow_steer",
     label: "Workflow Steer",
     description: "Send a steering message to a currently running child agent in a background workflow. Experimental live-steer capability.",
@@ -344,6 +368,20 @@ export default function extension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-prune", {
+    description: "Dry-run or remove old terminal workflow artifacts. Usage: /workflow-prune [--delete] [--older-than-days N] [--keep-last N]",
+    handler: async (args, ctx) => {
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const dryRun = !tokens.includes("--delete");
+      const olderIndex = tokens.indexOf("--older-than-days");
+      const keepIndex = tokens.indexOf("--keep-last");
+      const olderThanDays = olderIndex >= 0 ? Number(tokens[olderIndex + 1]) : undefined;
+      const keepLast = keepIndex >= 0 ? Number(tokens[keepIndex + 1]) : undefined;
+      const result = await manager.pruneRuns({ olderThanDays, keepLast, dryRun });
+      ctx.ui.notify(`Workflow prune ${result.dryRun ? "dry run" : "completed"}: ${result.candidates.length} candidate(s), ${result.removed.length} removed, ${result.failed.length} failed.`, result.failed.length ? "warning" : "info");
+    },
+  });
+
   pi.registerCommand("workflow-steer", {
     description: "Steer a live child session. Usage: /workflow-steer <run-id-prefix> -- <steering prompt>",
     handler: async (args, ctx) => {
@@ -395,7 +433,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_summary", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_steer", "workflow_resume", "workflow_cancel", "workflow_wait"];
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_summary", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_prune", "workflow_steer", "workflow_resume", "workflow_cancel", "workflow_wait"];
     const next = [...active];
     for (const tool of requiredTools) {
       if (!next.includes(tool)) next.push(tool);

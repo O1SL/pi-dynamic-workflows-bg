@@ -32,10 +32,10 @@ const pi = {
 
 extension(pi);
 
-for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_summary', 'workflow_transcript', 'workflow_events', 'workflow_worktrees', 'workflow_worktree_cleanup', 'workflow_steer', 'workflow_resume', 'workflow_cancel', 'workflow_wait']) {
+for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_summary', 'workflow_transcript', 'workflow_events', 'workflow_worktrees', 'workflow_worktree_cleanup', 'workflow_prune', 'workflow_steer', 'workflow_resume', 'workflow_cancel', 'workflow_wait']) {
   if (!tools.has(name)) throw new Error(`${name} tool was not registered`);
 }
-for (const name of ['workflow-status', 'workflow-result', 'workflow-summary', 'workflow-transcript', 'workflow-events', 'workflow-worktrees', 'workflow-worktree-cleanup', 'workflow-steer', 'workflow-resume', 'workflow-cancel']) {
+for (const name of ['workflow-status', 'workflow-result', 'workflow-summary', 'workflow-transcript', 'workflow-events', 'workflow-worktrees', 'workflow-worktree-cleanup', 'workflow-prune', 'workflow-steer', 'workflow-resume', 'workflow-cancel']) {
   if (!commands.has(name)) throw new Error(`${name} command was not registered`);
 }
 if (!renderers.has('background-workflow-result')) throw new Error('message renderer was not registered');
@@ -103,6 +103,10 @@ if (waitResult.details?.action !== 'wait' || waitResult.details?.found !== true)
 const cancelTool = tools.get('workflow_cancel');
 const cancelResult = await cancelTool.execute('cancel-1', { id: runId }, undefined, undefined, {});
 if (!cancelResult.isError || !cancelResult.content[0].text.includes(runId)) throw new Error('workflow_cancel terminal-run diagnostic mismatch');
+
+const pruneTool = tools.get('workflow_prune');
+const pruneResult = await pruneTool.execute('prune-1', { keepLast: 1000 }, undefined, undefined, {});
+if (!pruneResult.content[0].text.includes('Workflow prune dry run') || pruneResult.details?.dryRun !== true) throw new Error('workflow_prune dry-run response mismatch');
 if (cancelResult.details?.status !== 'not_running_or_not_found') throw new Error('workflow_cancel terminal-run details mismatch');
 
 console.log(JSON.stringify({ ok: true, runId, sent: { customType: sent.message.customType, triggerTurn: sent.options.triggerTurn }, wait: waitResult.details }, null, 2));

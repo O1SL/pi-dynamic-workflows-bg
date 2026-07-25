@@ -464,6 +464,14 @@ const ambiguousText = lazyManager.formatResult('20990101000003');
 assert(ambiguousText.includes('Ambiguous background workflow id/prefix'), 'ambiguous prefix did not report ambiguity');
 assert(ambiguousText.includes('20990101000003-ambiguous-a') && ambiguousText.includes('20990101000003-ambiguous-b'), 'ambiguous prefix did not list candidates');
 
+// 20. Prune is dry-run by default, only targets terminal runs, honors keepLast, and removes candidates when explicitly requested.
+const prunePreview = await lazyManager.pruneRuns({ keepLast: 1 });
+assert(prunePreview.dryRun === true && prunePreview.candidates.length >= 1 && prunePreview.removed.length === 0, `unexpected prune preview: ${JSON.stringify(prunePreview)}`);
+assert(existsSync(join(tmp, prunePreview.candidates[0], 'status.json')), 'dry-run prune removed artifacts unexpectedly');
+const pruneDelete = await lazyManager.pruneRuns({ keepLast: 1, dryRun: false });
+assert(pruneDelete.dryRun === false && pruneDelete.removed.length === pruneDelete.candidates.length, `unexpected prune delete: ${JSON.stringify(pruneDelete)}`);
+for (const id of pruneDelete.removed) assert(!existsSync(join(tmp, id)), `pruned artifact directory still exists: ${id}`);
+
 console.log(JSON.stringify({
   ok: true,
   tmp,
