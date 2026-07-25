@@ -439,6 +439,31 @@ assert(lazyManager.get('20990101000001-lazy')?.status === 'completed', 'lazy run
 assert(lazyManager.formatResult('20990101000001-lazy').includes('"lazy": true'), 'lazy restored result not formatted');
 assert(lazyManager.formatEvents('20990101000001-lazy').includes('workflow.completed'), 'lazy restored events not formatted');
 
+// 19. Ambiguous prefixes report candidate run ids instead of looking like a missing run.
+for (const id of ['20990101000003-ambiguous-a', '20990101000003-ambiguous-b']) {
+  const dir = join(tmp, id);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'status.json'), JSON.stringify({
+    id,
+    name: id.replace('20990101000003-', ''),
+    description: 'ambiguous prefix case',
+    status: 'completed',
+    cwd: process.cwd(),
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    artifactDir: dir,
+    outputPath: join(dir, 'output.md'),
+    resultPath: join(dir, 'result.json'),
+    statusPath: join(dir, 'status.json'),
+    eventsPath: join(dir, 'events.jsonl'),
+    snapshot: { name: id, description: 'ambiguous prefix case', phases: [], logs: [], agents: [], agentCount: 0, runningCount: 0, doneCount: 0, errorCount: 0 },
+  }, null, 2));
+}
+const ambiguousText = lazyManager.formatResult('20990101000003');
+assert(ambiguousText.includes('Ambiguous background workflow id/prefix'), 'ambiguous prefix did not report ambiguity');
+assert(ambiguousText.includes('20990101000003-ambiguous-a') && ambiguousText.includes('20990101000003-ambiguous-b'), 'ambiguous prefix did not list candidates');
+
 console.log(JSON.stringify({
   ok: true,
   tmp,

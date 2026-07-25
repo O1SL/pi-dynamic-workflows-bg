@@ -263,6 +263,18 @@ export function createBackgroundWorkflowManager(
     }
   };
 
+  const matchingRunIds = (idOrPrefix: string) => {
+    const ids = new Set<string>();
+    for (const id of runs.keys()) if (id.startsWith(idOrPrefix)) ids.add(id);
+    if (options.restore !== false && existsSync(runsRoot)) {
+      for (const entry of readdirSync(runsRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !entry.name.startsWith(idOrPrefix)) continue;
+        if (existsSync(join(runsRoot, entry.name, "status.json"))) ids.add(entry.name);
+      }
+    }
+    return [...ids].sort();
+  };
+
   const hydrateRunByPrefix = (idOrPrefix: string) => {
     if (options.restore === false || !existsSync(runsRoot)) return undefined;
     const matches: string[] = [];
@@ -272,6 +284,20 @@ export function createBackgroundWorkflowManager(
       if (existsSync(statusPath)) matches.push(statusPath);
     }
     return matches.length === 1 ? hydrateRunFromStatusPath(matches[0]!) : undefined;
+  };
+
+  const lookupError = (idOrPrefix: string) => {
+    const matches = matchingRunIds(idOrPrefix.trim());
+    if (matches.length > 1) {
+      const shown = matches.slice(0, 20);
+      return [
+        `Ambiguous background workflow id/prefix: ${idOrPrefix}`,
+        `Matched ${matches.length} runs:`,
+        ...shown.map((id) => `- ${id}`),
+        ...(matches.length > shown.length ? [`... ${matches.length - shown.length} more`] : []),
+      ].join("\n");
+    }
+    return `No background workflow found for: ${idOrPrefix}`;
   };
 
   refreshRunsFromDisk();
@@ -511,7 +537,7 @@ export function createBackgroundWorkflowManager(
 
   const resumeChild = async (idOrPrefix: string, prompt: string, selector?: string | number) => {
     const run = get(idOrPrefix.trim());
-    if (!run) throw new Error(`No background workflow found for: ${idOrPrefix}`);
+    if (!run) throw new Error(lookupError(idOrPrefix));
     const agent = selectTranscriptAgent(run, selector);
     if (!agent?.sessionFile) throw new Error(`No persisted child session matched selector: ${selector ?? "(first)"}`);
     const runner = new WorkflowAgent({ cwd: run.cwd });
@@ -522,7 +548,7 @@ export function createBackgroundWorkflowManager(
 
   const steerChild = async (idOrPrefix: string, prompt: string, selector?: string | number) => {
     const run = get(idOrPrefix.trim());
-    if (!run) throw new Error(`No background workflow found for: ${idOrPrefix}`);
+    if (!run) throw new Error(lookupError(idOrPrefix));
     const agent = selectTranscriptAgent(run, selector) ?? run.snapshot.agents[0];
     if (!agent) throw new Error(`No child agent matched selector: ${selector ?? "(first)"}`);
     const live = liveSessions.get(liveKey(run.id, agent.label));
@@ -586,7 +612,7 @@ export function createBackgroundWorkflowManager(
   const formatStatus = (idOrPrefix?: string) => {
     if (idOrPrefix?.trim()) {
       const run = get(idOrPrefix.trim());
-      if (!run) return `No background workflow found for: ${idOrPrefix}`;
+      if (!run) return lookupError(idOrPrefix);
       return formatRunStatus(run, true);
     }
     const all = list();
@@ -596,25 +622,25 @@ export function createBackgroundWorkflowManager(
 
   const formatResult = (idOrPrefix: string) => {
     const run = get(idOrPrefix.trim());
-    if (!run) return `No background workflow found for: ${idOrPrefix}`;
+    if (!run) return lookupError(idOrPrefix);
     return formatRunResult(run);
   };
 
   const formatTranscript = (idOrPrefix: string, selector?: string | number, lines?: number) => {
     const run = get(idOrPrefix.trim());
-    if (!run) return `No background workflow found for: ${idOrPrefix}`;
+    if (!run) return lookupError(idOrPrefix);
     return formatRunTranscript(run, selector, lines);
   };
 
   const formatEvents = (idOrPrefix: string, lines?: number) => {
     const run = get(idOrPrefix.trim());
-    if (!run) return `No background workflow found for: ${idOrPrefix}`;
+    if (!run) return lookupError(idOrPrefix);
     return formatRunEvents(run, lines);
   };
 
   const formatSummary = (idOrPrefix: string) => {
     const run = get(idOrPrefix.trim());
-    if (!run) return `No background workflow found for: ${idOrPrefix}`;
+    if (!run) return lookupError(idOrPrefix);
     return formatRunSummary(run);
   };
 
