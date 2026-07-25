@@ -398,7 +398,7 @@ await writeFile(join(aliveDir, 'status.json'), JSON.stringify({
   name: 'owned_running_case',
   description: 'running run owned by a live process',
   status: 'running',
-  ownerPid: process.pid,
+  ownerPid: process.ppid,
   cwd: process.cwd(),
   startedAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
