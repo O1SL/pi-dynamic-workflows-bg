@@ -52,8 +52,19 @@ Result:
 /workflow-status                  # list runs from this Pi process
 /workflow-status <id-prefix>      # detailed status
 /workflow-result <id-prefix>      # show final result / current snapshot
+/workflow-summary <id-prefix>     # one-shot diagnostic summary
+/workflow-events <id-prefix>      # show lifecycle events
+/workflow-transcript <id-prefix> [agent-label-or-index]
+/workflow-worktrees [id-prefix]   # list workflow-created git worktrees
+/workflow-worktree-cleanup [id-prefix]
+/workflow-prune                   # dry-run old terminal artifact cleanup
+/workflow-prune --delete --older-than-days 14 --keep-last 100
+/workflow-resume <id-prefix> -- <follow-up prompt>
+/workflow-steer <id-prefix> -- <steering prompt>
 /workflow-cancel <id-prefix>      # cancel a running workflow
 ```
+
+`workflow_prune` and `/workflow-prune` are safe by default: they dry-run unless `dryRun:false` or `--delete` is explicitly supplied, and they never prune running workflows.
 
 The model also gets explicit management tools so it can consume background results without relying on slash commands or `subagent_wait`:
 
