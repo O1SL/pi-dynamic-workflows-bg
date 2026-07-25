@@ -248,7 +248,10 @@ export default function extension(pi: ExtensionAPI) {
     }),
     async execute(_id, params) {
       const run = await manager.waitForRun(params.id, params.timeoutMs);
-      if (!run) return { content: [{ type: "text", text: `No background workflow found for: ${params.id}` }], isError: true, details: { action: "wait", id: params.id, found: false, status: "not_found" } };
+      if (!run) {
+        const text = manager.formatStatus(params.id);
+        return { content: [{ type: "text", text }], isError: true, details: { action: "wait", id: params.id, found: false, status: text.startsWith("Ambiguous ") ? "ambiguous" : "not_found" } };
+      }
       return { content: [{ type: "text", text: manager.formatResult(run.id) }], details: { action: "wait", id: run.id, found: true, status: run.status } };
     },
   }));
