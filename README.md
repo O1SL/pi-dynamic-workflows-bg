@@ -2,7 +2,7 @@
 
 > Background-first dynamic workflows for [Pi](https://github.com/earendil-works/pi).
 
-This is a fork of `pi-dynamic-workflows` that keeps the same deterministic JavaScript workflow DSL, but changes the default execution model: **workflow runs start in the background and return a run id immediately**. When a run completes, the extension appends a result card to the Pi transcript, similar to background subagent completion notifications.
+This is a fork of `pi-dynamic-workflows` that keeps the same deterministic JavaScript workflow DSL, but changes the default execution model: **workflow runs start in the background and return a run id immediately**. When a run completes, the extension sends a model-visible custom message with `triggerTurn: true`, so the parent agent wakes up and can consume the result, similar to background subagent completion notifications.
 
 ## Install
 
@@ -35,7 +35,7 @@ Artifacts: ~/.pi/agent/background-workflows/runs/20260725123000-inspect-project
 Use /workflow-status 20260725123000-inspect-project or /workflow-result 20260725123000-inspect-project to inspect it.
 ```
 
-When the workflow finishes, Pi appends a transcript entry:
+When the workflow finishes, Pi receives a model-visible custom message and renders a transcript entry:
 
 ```text
 Background workflow completed: inspect_project
@@ -102,9 +102,23 @@ Available globals are the same as the upstream plugin: `agent`, `parallel`, `pip
 
 ## Notes
 
+- Background completion uses `pi.sendMessage({ customType: "background-workflow-result", ... }, { triggerTurn: true })`, not a UI-only custom entry. The result is visible to the parent model on the next turn.
+- If `pi-subagents` is installed, the extension registers a compatible `pi-subagents.background-work.v1` provider so `subagent_wait` can track active workflow runs as provider work.
 - Background progress is persisted to artifact files. Live inline tool streaming is only available in `foreground:true` mode.
 - Runs are in-memory for cancellation/status during the current Pi process. If Pi restarts, completed artifacts remain on disk, but running jobs are not resumed.
 - This fork intentionally keeps the original `workflow` tool name so existing prompts keep working, but changes the default mode to background.
+
+## QA
+
+```bash
+npm run build
+npm run qa:smoke
+```
+
+`qa:smoke` runs:
+
+1. `qa-smoke.mjs` — mock-agent background execution, notification callback, and artifact checks.
+2. `qa-extension-smoke.mjs` — extension registration, model-visible `sendMessage(... triggerTurn:true)` completion, and `pi-subagents.background-work.v1` provider checks.
 
 ## License
 

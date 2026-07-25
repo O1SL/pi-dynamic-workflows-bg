@@ -21,6 +21,7 @@ export interface BackgroundWorkflowRun {
   description: string;
   status: BackgroundWorkflowStatus;
   cwd: string;
+  sessionId?: string;
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -40,6 +41,7 @@ export interface BackgroundWorkflowStartOptions extends WorkflowAgentOptions {
   agent?: Pick<WorkflowAgent, "run">;
   concurrency?: number;
   session?: Partial<CreateAgentSessionOptions>;
+  sessionId?: string;
 }
 
 export interface BackgroundWorkflowManagerOptions {
@@ -50,6 +52,7 @@ export interface BackgroundWorkflowManagerOptions {
 export interface BackgroundWorkflowManager {
   start(options: BackgroundWorkflowStartOptions): Promise<BackgroundWorkflowRun>;
   list(): BackgroundWorkflowRun[];
+  listActiveWork(): Array<{ id: string; sessionId: string }>;
   get(idOrPrefix: string): BackgroundWorkflowRun | undefined;
   cancel(idOrPrefix: string): boolean;
   formatStatus(idOrPrefix?: string): string;
@@ -97,6 +100,7 @@ export function createBackgroundWorkflowManager(
       description: parsed.meta.description,
       status: "running",
       cwd: startOptions.cwd ?? process.cwd(),
+      ...(startOptions.sessionId ? { sessionId: startOptions.sessionId } : {}),
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       artifactDir,
@@ -181,6 +185,10 @@ export function createBackgroundWorkflowManager(
 
   const list = () => [...runs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 
+  const listActiveWork = () => list()
+    .filter((run) => run.status === "running" && typeof run.sessionId === "string" && run.sessionId.length > 0)
+    .map((run) => ({ id: run.id, sessionId: run.sessionId! }));
+
   const get = (idOrPrefix: string) => {
     if (runs.has(idOrPrefix)) return runs.get(idOrPrefix);
     const matches = [...runs.values()].filter((run) => run.id.startsWith(idOrPrefix));
@@ -211,7 +219,7 @@ export function createBackgroundWorkflowManager(
     return formatRunResult(run);
   };
 
-  return { start, list, get, cancel, formatStatus, formatResult };
+  return { start, list, listActiveWork, get, cancel, formatStatus, formatResult };
 }
 
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {
