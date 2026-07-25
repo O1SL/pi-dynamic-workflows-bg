@@ -88,6 +88,7 @@ export class WorkflowAgent {
 
       await session.prompt(this.buildPrompt(prompt, options as AgentRunOptions<any>, Boolean(options.schema)));
       if (options.signal?.aborted) throw new Error("Subagent was aborted");
+      this.throwIfLastAssistantErrored(session.messages);
 
       if (options.schema) {
         if (!capture.called) {
@@ -124,6 +125,17 @@ export class WorkflowAgent {
     }
 
     return parts.join("\n\n");
+  }
+
+  private throwIfLastAssistantErrored(messages: unknown[]): void {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i] as (Partial<AssistantMessage> & { stopReason?: string; errorMessage?: string }) | undefined;
+      if (message?.role !== "assistant") continue;
+      if (message.stopReason === "error" || message.errorMessage) {
+        throw new Error(message.errorMessage || "Subagent assistant response ended with provider/tool error");
+      }
+      return;
+    }
   }
 
   private lastAssistantText(messages: unknown[]): string {
