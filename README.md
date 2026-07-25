@@ -111,6 +111,8 @@ Available globals are the same as the upstream plugin: `agent`, `parallel`, `pip
 
 ## Notes
 
+See [`docs/PARITY.md`](docs/PARITY.md) for the detailed parity matrix versus `pi-subagents`, including implemented, partial, and deliberately unsupported capabilities.
+
 - Background completion uses `pi.sendMessage({ customType: "background-workflow-result", ... }, { triggerTurn: true })`, not a UI-only custom entry. The result is visible to the parent model on the next turn.
 - Prefer `workflow_wait` when the current model turn must block until a specific workflow finishes. It is native to this extension and does not depend on `pi-subagents`.
 - The extension registers a best-effort compatible `pi-subagents.background-work.v1` provider. This works when both extensions share the same Pi extension realm (verified with explicit `-e` loading), but global package auto-loading can isolate realms enough that `subagent_wait` does not see workflow provider items. Completion messages remain model-visible either way.
