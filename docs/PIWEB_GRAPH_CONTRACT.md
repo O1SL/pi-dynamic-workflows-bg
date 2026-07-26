@@ -177,9 +177,26 @@ await pipeline(items, s1, s2, s3)  // ← 明确知道：m 个 item × n 个 sta
 | 谁 | 负责 | 怎么做 |
 |---|---|---|
 | **workflow-bg 运行时** | agent 节点、`phase`、`seq` 边、`parallel`/`pipeline` 分组、status、usage、attempts、artifact/session/worktree | 都是执行时已在手的数据 |
-| **pi-web** | `if/else` 分支识别、`for/while` 循环识别、动态 label 归并 | 静态扫描脚本的 `if`/`for` 块 —— **已经实现并上线了**，卡片上已经能显示 `⎇ 择一执行` / `↻ 循环` |
+| **pi-web** | `if/else` 分支识别、`for/while` 循环识别、`parallel`/`pipeline` 结构识别、动态 label 归并 | 静态扫描脚本 |
 
 **你们给"确定知道的"，我们推断"只能猜的"。** 谁都不做自己不该做的事。
+
+### 补充（2026-07-26，pi-web 侧已上线）
+
+pi-web 现在**把整张图的形状全部从脚本静态解析出来**，运行时数据只用来填状态：
+
+- `lib/workflow-plan.ts` 把脚本解析成嵌套结构：`if/else` → 分支组（每个 arm 一路）、`for/while` → 循环组、
+  `parallel([...])` → 并行组、`pipeline(items, s1, s2)` → 流水线组（第一个参数是 items，不算 stage），
+  支持任意层嵌套（`if { for { agent } }` 会正确画成 分支框 → 循环框 → 节点）。不含 agent 的块会被丢弃。
+- 每个"计划中的 agent"去认领运行时记录：字面 label 精确匹配；模板 label（`循环-${p.name}` → `循环-…`）
+  按前缀认领**全部**实例，所以一个循环体节点会展开成真实跑过的 N 轮。
+- 没被认领的：运行中显示 `pending`，运行结束显示 `skipped`（划掉 + "未执行"）——
+  **§2 里撤销的"没走的分支"就是这么来的，不需要你们上报。**
+
+**对你们的影响：没有。** 上面这些完全不依赖 `graph` 字段。你们已实现的 Phase 1/2 数据仍然全部在用
+（status / usage / attempts / sessionFile / worktreePath / artifactPath 都会显示在节点上），
+只是**图的骨架不再依赖 `graph.edges`**——因为运行时只知道已经跑过的部分，画不出完整骨架。
+`graph` 现在的角色是：给没有脚本可读的场景（比如 pi-subagents）单独兜底，以及补充每个节点的运行时细节。
 
 ---
 

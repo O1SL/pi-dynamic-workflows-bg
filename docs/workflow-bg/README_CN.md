@@ -1,6 +1,6 @@
 # pi-dynamic-workflows-bg 建设总结与接手指南
 
-本文是 `pi-dynamic-workflows-bg` 的中文总 README，融合了建设总结、产品方案、技术方案、验收标准、踩坑记录和后续接手建议。后续 Agent 接手开发时，优先阅读本文，再看 `PARITY.md`、`UNSUPPORTED.md` 和 `PIWEB_GRAPH_CONTRACT.md`。
+本文是 `pi-dynamic-workflows-bg` 的中文总 README，融合了建设总结、产品方案、技术方案、验收标准、踩坑记录和后续接手建议。后续 Agent 接手开发时，优先阅读本文，再看同目录下的 `PARITY.md`、`UNSUPPORTED.md`，以及上级目录的 `../PIWEB_GRAPH_CONTRACT.md`。
 
 仓库：<https://github.com/O1SL/pi-dynamic-workflows-bg>  
 本地路径：`/Users/bytedance/Desktop/AI项目/Pi/pi-dynamic-workflows-bg`  
@@ -167,10 +167,11 @@ workflow_wait
 ├── types/
 │   └── workflow.d.ts            # workflow script ambient globals 类型提示
 ├── docs/
-│   ├── README_CN.md             # 本文：建设总结 + 接手指南
-│   ├── PARITY.md                # 与 pi-subagents 的 parity 状态
-│   ├── UNSUPPORTED.md           # 明确 non-goals / partial 能力
-│   └── PIWEB_GRAPH_CONTRACT.md  # pi-web graph 合约与双方分工
+│   ├── PIWEB_GRAPH_CONTRACT.md  # pi-web graph 合约与双方分工
+│   └── workflow-bg/
+│       ├── README_CN.md         # 本文：建设总结 + 接手指南
+│       ├── PARITY.md            # 与 pi-subagents 的 parity 状态
+│       └── UNSUPPORTED.md       # 明确 non-goals / partial 能力
 ├── qa-smoke.mjs
 ├── qa-tool-budget.mjs
 ├── qa-manager-comprehensive.mjs
@@ -513,8 +514,8 @@ pi-subagents 是生产级子代理执行/控制平台。
 详见：
 
 ```text
-docs/UNSUPPORTED.md
-docs/PARITY.md
+docs/workflow-bg/UNSUPPORTED.md
+docs/workflow-bg/PARITY.md
 ```
 
 主要包括：
@@ -643,9 +644,9 @@ group end 要放到 `finally`，终态要收敛。
 1. 先读：
 
 ```text
-docs/README_CN.md
-docs/PARITY.md
-docs/UNSUPPORTED.md
+docs/workflow-bg/README_CN.md
+docs/workflow-bg/PARITY.md
+docs/workflow-bg/UNSUPPORTED.md
 docs/PIWEB_GRAPH_CONTRACT.md
 ```
 
