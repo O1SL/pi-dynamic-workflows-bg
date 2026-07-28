@@ -109,8 +109,50 @@ declare global {
   /** Append a workflow-level log line. */
   function log(message: unknown): void;
 
+  interface WorkflowContinuationParent {
+    runId: string;
+    name: string;
+    description: string;
+    status: string;
+    artifactDir: string;
+    statusPath: string;
+    outputPath: string;
+    resultPath: string;
+    eventsPath: string;
+    startedAt: string;
+    updatedAt: string;
+    completedAt?: string;
+    snapshot: {
+      phases: string[];
+      currentPhase?: string;
+      agents: Array<{
+        id: number;
+        agentRunId?: string;
+        label: string;
+        phase?: string;
+        status: string;
+        resultPreview?: string;
+        error?: string;
+        durationMs?: number;
+        attempts?: Array<{ model?: string; attempt?: number; status: "failed" | "succeeded"; error?: string }>;
+      }>;
+    };
+    result?: unknown;
+    resultTruncated?: boolean;
+  }
+
+  interface WorkflowContinuation {
+    version: 1;
+    kind: "extend" | "replace_tail";
+    createdAt: string;
+    parent: WorkflowContinuationParent;
+  }
+
   /** Optional JSON args passed to the workflow tool. Narrow with a local type assertion when needed. */
   const args: unknown;
+
+  /** Read-only parent context supplied to a linked workflow_extend/workflow_replace_tail run. Undefined for ordinary workflows. */
+  const continuation: WorkflowContinuation | undefined;
 
   /** Current working directory for the workflow/subagents. */
   const cwd: string;

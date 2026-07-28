@@ -34,6 +34,8 @@ export { applyToolBudgetToTools } from "./tool-budget.js";
 export { createStructuredOutputTool } from "./structured-output.js";
 export type {
   AgentOptions,
+  WorkflowContinuationContext,
+  WorkflowContinuationParent,
   WorkflowMeta,
   WorkflowMetaPhase,
   WorkflowRunOptions,

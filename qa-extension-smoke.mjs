@@ -32,10 +32,10 @@ const pi = {
 
 extension(pi);
 
-for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_summary', 'workflow_transcript', 'workflow_events', 'workflow_worktrees', 'workflow_worktree_cleanup', 'workflow_prune', 'workflow_steer', 'workflow_resume', 'workflow_cancel', 'workflow_wait']) {
+for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_summary', 'workflow_extend', 'workflow_replace_tail', 'workflow_transcript', 'workflow_events', 'workflow_worktrees', 'workflow_worktree_cleanup', 'workflow_prune', 'workflow_steer', 'workflow_resume', 'workflow_cancel', 'workflow_wait']) {
   if (!tools.has(name)) throw new Error(`${name} tool was not registered`);
 }
-for (const name of ['workflow-status', 'workflow-result', 'workflow-summary', 'workflow-transcript', 'workflow-events', 'workflow-worktrees', 'workflow-worktree-cleanup', 'workflow-prune', 'workflow-steer', 'workflow-resume', 'workflow-cancel']) {
+for (const name of ['workflow-status', 'workflow-result', 'workflow-summary', 'workflow-extend', 'workflow-replace-tail', 'workflow-transcript', 'workflow-events', 'workflow-worktrees', 'workflow-worktree-cleanup', 'workflow-prune', 'workflow-steer', 'workflow-resume', 'workflow-cancel']) {
   if (!commands.has(name)) throw new Error(`${name} command was not registered`);
 }
 if (!renderers.has('background-workflow-result')) throw new Error('message renderer was not registered');

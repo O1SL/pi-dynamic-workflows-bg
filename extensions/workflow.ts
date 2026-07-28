@@ -128,6 +128,71 @@ export default function extension(pi: ExtensionAPI) {
   }));
 
   pi.registerTool(defineTool({
+    name: "workflow_extend",
+    label: "Workflow Extend",
+    description: "Start a linked follow-up workflow using a parent run's partial or final context. The parent is not modified or resumed; the new workflow receives a read-only continuation global.",
+    parameters: Type.Object({
+      parentId: Type.String({ description: "Parent workflow run id or unique prefix." }),
+      script: Type.String({ description: "Raw follow-up workflow JavaScript. It receives the read-only `continuation` global." }),
+      args: Type.Optional(Type.Any({ description: "Optional JSON value exposed as `args` to the new workflow." })),
+      concurrency: Type.Optional(Type.Number({ description: "Maximum concurrent child agents." })),
+      tokenBudget: Type.Optional(Type.Number({ description: "Approximate output token budget for the follow-up workflow." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      try {
+        const run = await manager.extend(params.parentId, {
+          script: params.script,
+          args: params.args,
+          cwd: ctx.cwd,
+          concurrency: params.concurrency,
+          tokenBudget: params.tokenBudget,
+          sessionId: resolveWorkflowSessionId(ctx.sessionManager),
+          session: { modelRegistry: ctx.modelRegistry, model: ctx.model },
+        });
+        return {
+          content: [{ type: "text", text: `Started linked follow-up workflow ${run.name}.\nRun ID: ${run.id}\nParent: ${run.continuation?.parent.runId}\nArtifacts: ${run.artifactDir}` }],
+          details: { mode: "background", action: "extend", id: run.id, name: run.name, description: run.description, parentId: run.continuation?.parent.runId, artifactDir: run.artifactDir, statusPath: run.statusPath, outputPath: run.outputPath },
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { action: "extend", parentId: params.parentId } };
+      }
+    },
+  }));
+
+  pi.registerTool(defineTool({
+    name: "workflow_replace_tail",
+    label: "Workflow Replace Tail",
+    description: "Cancel a running parent workflow, wait for it to settle, then start a linked follow-up workflow from its partial context. This never mutates a running JS VM.",
+    parameters: Type.Object({
+      parentId: Type.String({ description: "Running parent workflow run id or unique prefix." }),
+      script: Type.String({ description: "Raw replacement follow-up workflow JavaScript. It receives the read-only `continuation` global." }),
+      args: Type.Optional(Type.Any({ description: "Optional JSON value exposed as `args` to the new workflow." })),
+      concurrency: Type.Optional(Type.Number({ description: "Maximum concurrent child agents." })),
+      tokenBudget: Type.Optional(Type.Number({ description: "Approximate output token budget for the follow-up workflow." })),
+      timeoutMs: Type.Optional(Type.Number({ description: "Maximum milliseconds to wait for parent cancellation. Default 30 minutes." })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      try {
+        const run = await manager.replaceTail(params.parentId, {
+          script: params.script,
+          args: params.args,
+          cwd: ctx.cwd,
+          concurrency: params.concurrency,
+          tokenBudget: params.tokenBudget,
+          sessionId: resolveWorkflowSessionId(ctx.sessionManager),
+          session: { modelRegistry: ctx.modelRegistry, model: ctx.model },
+        }, params.timeoutMs);
+        return {
+          content: [{ type: "text", text: `Cancelled parent workflow and started replacement follow-up ${run.name}.\nRun ID: ${run.id}\nParent: ${run.continuation?.parent.runId}\nArtifacts: ${run.artifactDir}` }],
+          details: { mode: "background", action: "replace_tail", id: run.id, name: run.name, description: run.description, parentId: run.continuation?.parent.runId, artifactDir: run.artifactDir, statusPath: run.statusPath, outputPath: run.outputPath },
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { action: "replace_tail", parentId: params.parentId } };
+      }
+    },
+  }));
+
+  pi.registerTool(defineTool({
     name: "workflow_transcript",
     label: "Workflow Transcript",
     description: "Read a persisted child agent transcript for a background workflow by run id/prefix.",
@@ -337,6 +402,54 @@ export default function extension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-extend", {
+    description: "Start a linked follow-up workflow. Usage: /workflow-extend <parent-run-id> -- <raw workflow script>",
+    handler: async (args, ctx) => {
+      const separator = args.indexOf("--");
+      const parentId = (separator >= 0 ? args.slice(0, separator) : args).trim();
+      const script = separator >= 0 ? args.slice(separator + 2).trim() : "";
+      if (!parentId || !script) {
+        ctx.ui.notify("Usage: /workflow-extend <parent-run-id> -- <raw workflow script>", "error");
+        return;
+      }
+      try {
+        const run = await manager.extend(parentId, {
+          script,
+          cwd: ctx.cwd,
+          sessionId: resolveWorkflowSessionId(ctx.sessionManager),
+          session: { modelRegistry: ctx.modelRegistry, model: ctx.model },
+        });
+        ctx.ui.notify(`Started linked follow-up ${run.id} from ${run.continuation?.parent.runId}.`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
+  });
+
+  pi.registerCommand("workflow-replace-tail", {
+    description: "Cancel a running workflow and start a linked replacement. Usage: /workflow-replace-tail <parent-run-id> -- <raw workflow script>",
+    handler: async (args, ctx) => {
+      const separator = args.indexOf("--");
+      const parentId = (separator >= 0 ? args.slice(0, separator) : args).trim();
+      const script = separator >= 0 ? args.slice(separator + 2).trim() : "";
+      if (!parentId || !script) {
+        ctx.ui.notify("Usage: /workflow-replace-tail <parent-run-id> -- <raw workflow script>", "error");
+        return;
+      }
+      try {
+        const run = await manager.replaceTail(parentId, {
+          script,
+          cwd: ctx.cwd,
+          sessionId: resolveWorkflowSessionId(ctx.sessionManager),
+          session: { modelRegistry: ctx.modelRegistry, model: ctx.model },
+        });
+        ctx.ui.notify(`Cancelled ${parentId} and started linked replacement ${run.id}.`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
+  });
+
   pi.registerCommand("workflow-transcript", {
     description: "Show a child transcript for a background workflow. Usage: /workflow-transcript <run-id-prefix> [agent-label-or-index]",
     handler: async (args, ctx) => {
@@ -460,7 +573,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_summary", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_prune", "workflow_steer", "workflow_resume", "workflow_cancel", "workflow_wait"];
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_summary", "workflow_extend", "workflow_replace_tail", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_prune", "workflow_steer", "workflow_resume", "workflow_cancel", "workflow_wait"];
     const next = [...active];
     for (const tool of requiredTools) {
       if (!next.includes(tool)) next.push(tool);

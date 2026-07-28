@@ -25,8 +25,49 @@ export interface WorkflowMeta {
   phases?: WorkflowMetaPhase[];
 }
 
+export interface WorkflowContinuationParent {
+  runId: string;
+  name: string;
+  description: string;
+  status: string;
+  artifactDir: string;
+  statusPath: string;
+  outputPath: string;
+  resultPath: string;
+  eventsPath: string;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  snapshot: {
+    phases: string[];
+    currentPhase?: string;
+    agents: Array<{
+      id: number;
+      agentRunId?: string;
+      label: string;
+      phase?: string;
+      status: string;
+      resultPreview?: string;
+      error?: string;
+      durationMs?: number;
+      attempts?: Array<{ model?: string; attempt?: number; status: "failed" | "succeeded"; error?: string }>;
+    }>;
+  };
+  result?: unknown;
+  resultTruncated?: boolean;
+}
+
+export interface WorkflowContinuationContext {
+  version: 1;
+  kind: "extend" | "replace_tail";
+  createdAt: string;
+  parent: WorkflowContinuationParent;
+}
+
 export interface WorkflowRunOptions extends WorkflowAgentOptions {
   args?: unknown;
+  /** Read-only context supplied only to linked follow-up workflows. */
+  continuation?: WorkflowContinuationContext;
   agent?: Pick<WorkflowAgent, "run">;
   concurrency?: number;
   tokenBudget?: number | null;
@@ -291,6 +332,7 @@ export async function runWorkflow<T = unknown>(
     log,
     phase,
     args: options.args,
+    continuation: options.continuation ? deepFreeze(structuredClone(options.continuation)) : undefined,
     cwd: options.cwd ?? process.cwd(),
     process: Object.freeze({ cwd: () => options.cwd ?? process.cwd() }),
     budget,
@@ -491,6 +533,13 @@ function validateMeta(meta: unknown): asserts meta is WorkflowMeta {
       }
     }
   }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  return value;
 }
 
 function safeMath(): Math {

@@ -60,6 +60,8 @@ Result:
 /workflow-worktree-cleanup [id-prefix]
 /workflow-prune                   # dry-run old terminal artifact cleanup
 /workflow-prune --delete --older-than-days 14 --keep-last 100
+/workflow-extend <parent-id> -- <raw follow-up workflow script>
+/workflow-replace-tail <parent-id> -- <raw replacement workflow script>
 /workflow-resume <id-prefix> -- <follow-up prompt>
 /workflow-steer <id-prefix> -- <steering prompt>
 /workflow-cancel <id-prefix>      # cancel a running workflow
@@ -78,6 +80,8 @@ workflow_transcript               # inspect child sessions
 workflow_worktrees                # list isolated worktrees
 workflow_worktree_cleanup         # clean workflow-created worktrees
 workflow_prune                    # dry-run/delete old terminal workflow artifacts
+workflow_extend                   # start linked follow-up with read-only continuation context
+workflow_replace_tail             # cancel running parent then start linked replacement
 workflow_cancel                   # cancel a running workflow
 workflow_wait                     # wait for one run, or all current-session workflows with all:true
 ```
@@ -157,7 +161,7 @@ const review = await agent('Review this module.', {
 
 ## Notes
 
-See [`docs/workflow-bg/README_CN.md`](docs/workflow-bg/README_CN.md) for a complete Chinese build-out summary and future-agent handoff guide. See [`docs/workflow-bg/PARITY.md`](docs/workflow-bg/PARITY.md) for the detailed parity matrix versus `pi-subagents`, including implemented and partial capabilities. See [`docs/workflow-bg/UNSUPPORTED.md`](docs/workflow-bg/UNSUPPORTED.md) for deliberate non-goals and deeper limitations.
+See [`docs/workflow-bg/README_CN.md`](docs/workflow-bg/README_CN.md) for a complete Chinese build-out summary and future-agent handoff guide. See [`docs/workflow-bg/PARITY.md`](docs/workflow-bg/PARITY.md) for the detailed parity matrix versus `pi-subagents`, including implemented and partial capabilities. See [`docs/workflow-bg/UNSUPPORTED.md`](docs/workflow-bg/UNSUPPORTED.md) for deliberate non-goals and deeper limitations. See [`docs/PIWEB_CONTINUATION_CONTRACT.md`](docs/PIWEB_CONTINUATION_CONTRACT.md) for the minimal linked-workflow UI contract.
 
 - Background completion uses `pi.sendMessage({ customType: "background-workflow-result", ... }, { triggerTurn: true })`, not a UI-only custom entry. The result is visible to the parent model on the next turn.
 - Prefer `workflow_wait` when the current model turn must block until a specific workflow finishes. It is native to this extension and does not depend on `pi-subagents`.

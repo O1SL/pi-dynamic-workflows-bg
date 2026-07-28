@@ -77,6 +77,68 @@ success.snapshot.agents[0].sessionFile = fakeSessionFile;
 const transcript = manager.formatTranscript(success.id, 'mock success', 10);
 assert(transcript.includes('child transcript ok'), 'workflow transcript did not include child assistant text');
 
+// 1b. Extend starts an independent linked workflow with read-only parent context.
+const extendScript = `export const meta = { name: 'extend_case', description: 'extend case' }
+const frozen = Object.isFrozen(continuation) && Object.isFrozen(continuation.parent)
+const result = await agent('parent=' + continuation.parent.runId + ';status=' + continuation.parent.status, { label: 'extended child' })
+return { parent: continuation.parent.runId, status: continuation.parent.status, frozen, result }
+`;
+const extended = await manager.extend(success.id, {
+  script: extendScript,
+  agent: { async run(prompt) { return prompt; } },
+});
+await manager.waitForRun(extended.id, 2000);
+assert(extended.status === 'completed', `extend status ${extended.status}`);
+assert(extended.continuation?.kind === 'extend' && extended.continuation.parent.runId === success.id, 'extend continuation metadata mismatch');
+const extendedStatus = JSON.parse(await readFile(extended.statusPath, 'utf8'));
+assert(extendedStatus.continuation?.kind === 'extend' && extendedStatus.continuation?.parent?.runId === success.id, 'extend continuation was not persisted');
+assert(extended.result?.result?.parent === success.id && extended.result?.result?.status === 'completed' && extended.result?.result?.frozen === true, 'extend continuation global mismatch');
+assert((await readFile(success.eventsPath, 'utf8')).includes('workflow.continuation.created'), 'extend parent event missing');
+
+const replaceParentScript = `export const meta = { name: 'replace_parent_case', description: 'replace parent case' }
+const result = await agent('hold', { label: 'replace parent child' })
+return { result }
+`;
+let replaceParentAborted = false;
+const replaceParent = await manager.start({
+  script: replaceParentScript,
+  sessionId: 'session-replace-parent',
+  agent: {
+    async run(_prompt, opts) {
+      await new Promise((resolve, reject) => opts.signal?.addEventListener('abort', () => { replaceParentAborted = true; reject(new Error('replace parent aborted')); }, { once: true }));
+    },
+  },
+});
+await waitUntil(() => replaceParent.snapshot.agents.length === 1, 'replace parent child start');
+const replaced = await manager.replaceTail(replaceParent.id, {
+  script: `export const meta = { name: 'replace_child_case', description: 'replace child case' }
+const result = await agent('replaced=' + continuation.parent.runId + ';status=' + continuation.parent.status, { label: 'replace follow-up child' })
+return { parent: continuation.parent.runId, status: continuation.parent.status, result }
+`,
+  agent: { async run(prompt) { return prompt; } },
+});
+await manager.waitForRun(replaced.id, 2000);
+assert(replaceParentAborted && replaceParent.status === 'cancelled', `replace parent was not cancelled: ${replaceParent.status}`);
+assert(replaced.status === 'completed' && replaced.continuation?.kind === 'replace_tail', 'replace child did not complete as linked workflow');
+assert(replaced.result?.result?.parent === replaceParent.id && replaced.result?.result?.status === 'cancelled', 'replace continuation context mismatch');
+await manager.replaceTail(success.id, { script: extendScript, agent: { async run() { return 'no'; } } })
+  .then(() => { throw new Error('replaceTail should reject terminal parent'); }, (error) => {
+    assert(String(error).includes('requires a running parent'), `replace terminal error mismatch: ${error}`);
+  });
+const invalidReplaceParent = await manager.start({
+  script: replaceParentScript,
+  sessionId: 'session-invalid-replace',
+  agent: { async run(_prompt, opts) { await new Promise((resolve, reject) => opts.signal?.addEventListener('abort', () => reject(new Error('invalid replace abort')), { once: true })); } },
+});
+await waitUntil(() => invalidReplaceParent.snapshot.agents.length === 1, 'invalid replace parent start');
+await manager.replaceTail(invalidReplaceParent.id, { script: 'invalid workflow body', agent: { async run() { return 'no'; } } })
+  .then(() => { throw new Error('replaceTail should reject invalid replacement script'); }, (error) => {
+    assert(/SyntaxError|must start with/.test(String(error)), `invalid replacement error mismatch: ${error}`);
+  });
+assert(invalidReplaceParent.status === 'running', 'invalid replacement should not cancel running parent');
+assert(manager.cancel(invalidReplaceParent.id), 'failed to cancel invalid replace parent');
+await manager.waitForRun(invalidReplaceParent.id, 2000);
+
 const graphParallelScript = `export const meta = { name: 'graph_parallel_case', description: 'graph parallel case' }
 phase('Graph')
 await agent('first', { label: 'first graph' })

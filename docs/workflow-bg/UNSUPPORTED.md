@@ -13,6 +13,8 @@ A workflow script runs inside a Node `vm` as an async JavaScript function. Captu
 - Every run persists `status.json`, `events.jsonl`, `output.md`, `result.json`, and child `sessions/`.
 - `workflow_summary`, `workflow_events`, `workflow_result`, and `workflow_transcript` reconstruct what happened.
 - `workflow_resume` continues a child session, not the original JS workflow graph.
+- `workflow_extend` starts a linked follow-up workflow from a parent run's partial/final context without changing the parent.
+- `workflow_replace_tail` cancels a running parent, waits for it to settle, then starts a linked replacement from its partial context.
 - If the workflow process dies while `status: running`, recovery marks it `interrupted`.
 
 **Future feasible direction:** step-level workflow recipes with explicit checkpoints, not arbitrary JS continuation restore.

@@ -16,7 +16,7 @@ import {
   upsertWorkflowGraphNode,
   type WorkflowSnapshot,
 } from "./display.js";
-import { parseWorkflowScript, runWorkflow, type WorkflowMeta, type WorkflowRunResult } from "./workflow.js";
+import { parseWorkflowScript, runWorkflow, type WorkflowContinuationContext, type WorkflowMeta, type WorkflowRunResult } from "./workflow.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -29,6 +29,8 @@ export interface BackgroundWorkflowRun {
   status: BackgroundWorkflowStatus;
   cwd: string;
   sessionId?: string;
+  /** A linked run created from a previous workflow's partial or final state. */
+  continuation?: WorkflowContinuationContext;
   ownerPid?: number;
   startedAt: string;
   updatedAt: string;
@@ -55,6 +57,7 @@ export interface BackgroundWorkflowStartOptions extends WorkflowAgentOptions {
   tokenBudget?: number | null;
   session?: Partial<CreateAgentSessionOptions>;
   sessionId?: string;
+  continuation?: WorkflowContinuationContext;
 }
 
 export interface BackgroundWorkflowManagerOptions {
@@ -68,6 +71,8 @@ export interface BackgroundWorkflowManagerOptions {
 
 export interface BackgroundWorkflowManager {
   start(options: BackgroundWorkflowStartOptions): Promise<BackgroundWorkflowRun>;
+  extend(parentIdOrPrefix: string, options: Omit<BackgroundWorkflowStartOptions, "continuation">): Promise<BackgroundWorkflowRun>;
+  replaceTail(parentIdOrPrefix: string, options: Omit<BackgroundWorkflowStartOptions, "continuation">, timeoutMs?: number): Promise<BackgroundWorkflowRun>;
   list(): BackgroundWorkflowRun[];
   listActiveWork(): Array<{ id: string; sessionId: string }>;
   get(idOrPrefix: string): BackgroundWorkflowRun | undefined;
@@ -89,6 +94,63 @@ export interface BackgroundWorkflowManager {
 function defaultRunsRoot(): string {
   const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
   return join(agentDir, "background-workflows", "runs");
+}
+
+const MAX_CONTINUATION_RESULT_CHARS = 48_000;
+
+function buildContinuationContext(parent: BackgroundWorkflowRun, kind: "extend" | "replace_tail"): WorkflowContinuationContext {
+  let result = parent.result?.result ?? parent.snapshot.result;
+  let resultTruncated = false;
+  if (result !== undefined) {
+    try {
+      const serialized = JSON.stringify(result);
+      if (serialized.length > MAX_CONTINUATION_RESULT_CHARS) {
+        result = serialized.slice(0, MAX_CONTINUATION_RESULT_CHARS);
+        resultTruncated = true;
+      } else {
+        result = JSON.parse(serialized);
+      }
+    } catch {
+      result = String(result);
+      resultTruncated = true;
+    }
+  }
+  return {
+    version: 1,
+    kind,
+    createdAt: new Date().toISOString(),
+    parent: {
+      runId: parent.id,
+      name: parent.name,
+      description: parent.description,
+      status: parent.status,
+      artifactDir: parent.artifactDir,
+      statusPath: parent.statusPath,
+      outputPath: parent.outputPath,
+      resultPath: parent.resultPath,
+      eventsPath: parent.eventsPath,
+      startedAt: parent.startedAt,
+      updatedAt: parent.updatedAt,
+      ...(parent.completedAt ? { completedAt: parent.completedAt } : {}),
+      snapshot: {
+        phases: [...parent.snapshot.phases],
+        ...(parent.snapshot.currentPhase ? { currentPhase: parent.snapshot.currentPhase } : {}),
+        agents: parent.snapshot.agents.map((agent) => ({
+          id: agent.id,
+          ...(agent.agentRunId ? { agentRunId: agent.agentRunId } : {}),
+          label: agent.label,
+          ...(agent.phase ? { phase: agent.phase } : {}),
+          status: agent.status,
+          ...(agent.resultPreview ? { resultPreview: agent.resultPreview } : {}),
+          ...(agent.error ? { error: agent.error } : {}),
+          ...(agent.durationMs !== undefined ? { durationMs: agent.durationMs } : {}),
+          ...(agent.attempts ? { attempts: agent.attempts } : {}),
+        })),
+      },
+      ...(result !== undefined ? { result } : {}),
+      ...(resultTruncated ? { resultTruncated: true } : {}),
+    },
+  };
 }
 
 function isPathInside(parent: string, child: string): boolean {
@@ -242,6 +304,7 @@ export function createBackgroundWorkflowManager(
         status,
         cwd: raw.cwd ?? process.cwd(),
         ...(raw.sessionId ? { sessionId: raw.sessionId } : {}),
+        ...(raw.continuation ? { continuation: raw.continuation as WorkflowContinuationContext } : {}),
         ...(raw.ownerPid ? { ownerPid: raw.ownerPid } : {}),
         startedAt: raw.startedAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -337,6 +400,7 @@ export function createBackgroundWorkflowManager(
       status: "running",
       cwd: startOptions.cwd ?? process.cwd(),
       ...(startOptions.sessionId ? { sessionId: startOptions.sessionId } : {}),
+      ...(startOptions.continuation ? { continuation: startOptions.continuation } : {}),
       ownerPid: process.pid,
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -352,7 +416,13 @@ export function createBackgroundWorkflowManager(
     runs.set(id, run);
     settledResolvers.set(id, resolveSettled);
     await persist(run);
-    appendEventSync(run, { type: "workflow.started", id: run.id, name: run.name, cwd: run.cwd });
+    appendEventSync(run, {
+      type: "workflow.started",
+      id: run.id,
+      name: run.name,
+      cwd: run.cwd,
+      ...(run.continuation ? { continuationKind: run.continuation.kind, parentRunId: run.continuation.parent.runId } : {}),
+    });
 
     void (async () => {
       try {
@@ -360,6 +430,7 @@ export function createBackgroundWorkflowManager(
           cwd: run.cwd,
           sessionDir: join(run.artifactDir, "sessions"),
           args: startOptions.args,
+          continuation: startOptions.continuation,
           concurrency: startOptions.concurrency,
           tokenBudget: startOptions.tokenBudget,
           signal: run.controller.signal,
@@ -522,6 +593,46 @@ export function createBackgroundWorkflowManager(
     })();
 
     return run;
+  };
+
+  const extend = async (parentIdOrPrefix: string, extendOptions: Omit<BackgroundWorkflowStartOptions, "continuation">) => {
+    const parent = get(parentIdOrPrefix.trim());
+    if (!parent) throw new Error(lookupError(parentIdOrPrefix));
+    const continuation = buildContinuationContext(parent, "extend");
+    const child = await start({
+      ...extendOptions,
+      ...(extendOptions.sessionId ? {} : parent.sessionId ? { sessionId: parent.sessionId } : {}),
+      continuation,
+    });
+    appendEventSync(parent, { type: "workflow.continuation.created", kind: "extend", childRunId: child.id });
+    void persist(parent).catch(() => undefined);
+    return child;
+  };
+
+  const replaceTail = async (
+    parentIdOrPrefix: string,
+    replaceOptions: Omit<BackgroundWorkflowStartOptions, "continuation">,
+    timeoutMs = 30 * 60 * 1000,
+  ) => {
+    const parent = get(parentIdOrPrefix.trim());
+    if (!parent) throw new Error(lookupError(parentIdOrPrefix));
+    // Validate before cancelling a live parent: a malformed replacement must not destroy useful work.
+    parseWorkflowScript(replaceOptions.script.trim());
+    if (parent.status !== "running") {
+      throw new Error(`workflow_replace_tail requires a running parent workflow; ${parent.id} is ${parent.status}. Use workflow_extend for a terminal run.`);
+    }
+    parent.controller.abort();
+    await waitForRun(parent.id, timeoutMs);
+    if (parent.status === "running") throw new Error(`Timed out replacing parent workflow ${parent.id}.`);
+    const continuation = buildContinuationContext(parent, "replace_tail");
+    const child = await start({
+      ...replaceOptions,
+      ...(replaceOptions.sessionId ? {} : parent.sessionId ? { sessionId: parent.sessionId } : {}),
+      continuation,
+    });
+    appendEventSync(parent, { type: "workflow.continuation.created", kind: "replace_tail", childRunId: child.id });
+    void persist(parent).catch(() => undefined);
+    return child;
   };
 
   const list = () => {
@@ -743,7 +854,7 @@ export function createBackgroundWorkflowManager(
     return formatRunSummary(run);
   };
 
-  return { start, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, steerChild, listWorktrees, cleanupWorktrees, pruneRuns, formatStatus, formatResult, formatTranscript, formatEvents, formatSummary };
+  return { start, extend, replaceTail, list, listActiveWork, get, cancel, waitForRun, waitForIdle, resumeChild, steerChild, listWorktrees, cleanupWorktrees, pruneRuns, formatStatus, formatResult, formatTranscript, formatEvents, formatSummary };
 }
 
 function timestampOfRun(run: BackgroundWorkflowRun): number {
@@ -777,6 +888,7 @@ export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): s
     `Output: ${run.outputPath}`,
   ];
   if (run.completedAt) lines.push(`Completed: ${run.completedAt}`);
+  if (run.continuation) lines.push(`Continuation: ${run.continuation.kind} of ${run.continuation.parent.runId}`);
   if (run.error) lines.push(`Error: ${run.error}`);
   lines.push("", renderWorkflowText(run.snapshot, run.status !== "running"));
   return lines.join("\n");
@@ -784,7 +896,14 @@ export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): s
 
 export function formatRunResult(run: BackgroundWorkflowRun): string {
   const heading = `Background workflow ${run.status}: ${run.name}`;
-  const lines = [heading, "", `Run ID: ${run.id}`, `Artifacts: ${run.artifactDir}`, ""];
+  const lines = [
+    heading,
+    "",
+    `Run ID: ${run.id}`,
+    ...(run.continuation ? [`Continuation: ${run.continuation.kind} of ${run.continuation.parent.runId}`] : []),
+    `Artifacts: ${run.artifactDir}`,
+    "",
+  ];
   lines.push(renderWorkflowText(run.snapshot, run.status !== "running"));
   if (run.error) lines.push("", `Error: ${run.error}`);
   if (run.result) lines.push("", "Result:", "```json", JSON.stringify(run.result.result, null, 2), "```");
@@ -817,6 +936,7 @@ export function formatRunSummary(run: BackgroundWorkflowRun): string {
   const nextActions: string[] = [];
   if (run.status === "running") nextActions.push(`Use workflow_wait with id ${run.id} to wait for completion, or workflow_cancel to stop it.`);
   if (run.status === "failed") nextActions.push(`Use workflow_events ${run.id} and workflow_transcript ${run.id} to inspect the failure.`);
+  if (run.status !== "running") nextActions.push(`Use workflow_extend ${run.id} to start a linked follow-up based on this run's context.`);
   if (sessionAgents.length > 0) nextActions.push(`Use workflow_transcript ${run.id} to inspect child session transcripts.`);
   if (sessionAgents.length > 0 && run.status !== "running") nextActions.push(`Use workflow_resume ${run.id} with a follow-up prompt to continue a child session.`);
   if (worktreeAgents.length > 0) nextActions.push(`Use workflow_worktrees ${run.id} to inspect isolated worktrees; use workflow_worktree_cleanup when done.`);
@@ -834,6 +954,7 @@ export function formatRunSummary(run: BackgroundWorkflowRun): string {
     `Output: ${run.outputPath}`,
     `Events: ${run.eventsPath}`,
     `Result: ${run.resultPath}`,
+    ...(run.continuation ? [`Continuation: ${run.continuation.kind} of ${run.continuation.parent.runId}`] : []),
     "",
     `Agents: ${run.snapshot.doneCount}/${run.snapshot.agentCount} done, ${run.snapshot.runningCount} running, ${run.snapshot.errorCount} errors`,
     ...(failedAgents.length ? [`Failed agents: ${failedAgents.map((agent) => `#${agent.id} ${agent.label}`).join(", ")}`] : []),

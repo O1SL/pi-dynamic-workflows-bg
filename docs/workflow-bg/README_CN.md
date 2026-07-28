@@ -142,6 +142,8 @@ workflow_wait
 /workflow-worktrees [id-prefix]
 /workflow-worktree-cleanup [id-prefix]
 /workflow-prune [--delete] [--older-than-days N] [--keep-last N]
+/workflow-extend <parent-id> -- <raw follow-up workflow script>
+/workflow-replace-tail <parent-id> -- <raw replacement workflow script>
 /workflow-steer <id-prefix> -- <steering prompt>
 /workflow-resume <id-prefix> -- <follow-up prompt>
 /workflow-cancel <id-prefix>
@@ -167,7 +169,8 @@ workflow_wait
 ├── types/
 │   └── workflow.d.ts            # workflow script ambient globals 类型提示
 ├── docs/
-│   ├── PIWEB_GRAPH_CONTRACT.md  # pi-web graph 合约与双方分工
+│   ├── PIWEB_GRAPH_CONTRACT.md         # pi-web graph 合约与双方分工
+│   ├── PIWEB_CONTINUATION_CONTRACT.md  # linked workflow 的 pi-web 协议
 │   └── workflow-bg/
 │       ├── README_CN.md         # 本文：建设总结 + 接手指南
 │       ├── PARITY.md            # 与 pi-subagents 的 parity 状态
@@ -202,7 +205,46 @@ pi.sendMessage(..., { triggerTurn: true })
 
 ---
 
-### 6.2 Artifacts
+### 6.2 自适应流程：推荐写法
+
+如果后续工作可以由 workflow 自己根据早期结果决定，优先使用普通 JS 条件逻辑：
+
+```js
+phase('Discovery')
+const discovery = await agent('Inspect the repository and identify risks', { label: 'discovery' })
+
+const followups = []
+if (discovery.includes('security')) {
+  followups.push(() => agent('Perform security review', { label: 'security review' }))
+}
+if (discovery.includes('performance')) {
+  followups.push(() => agent('Perform performance review', { label: 'performance review' }))
+}
+
+phase('Follow-up')
+const reviews = await parallel(followups)
+return { discovery, reviews }
+```
+
+如果主模型或用户需要先看中间结论、再重新规划，使用 linked workflow：
+
+```text
+workflow_extend        # 保留 parent，启动 linked follow-up
+workflow_replace_tail  # 取消 running parent，再启动 linked replacement
+```
+
+follow-up script 里可读取只读的：
+
+```js
+continuation.parent.runId
+continuation.parent.result
+continuation.parent.outputPath
+continuation.parent.snapshot
+```
+
+不要尝试原地修改正在跑的 JS workflow。它涉及 locals、closure、Promise、parallel pending work 和 artifact/graph 对齐，属于完整 workflow engine 的复杂度，不是本项目目标。
+
+### 6.3 Artifacts
 
 每个 run 写入：
 
@@ -227,7 +269,7 @@ pi.sendMessage(..., { triggerTurn: true })
 
 ---
 
-### 6.3 Durable registry / recovery
+### 6.4 Durable registry / recovery
 
 实现：
 
@@ -241,7 +283,7 @@ pi.sendMessage(..., { triggerTurn: true })
 
 ---
 
-### 6.4 wait/status/result/summary/events/transcript
+### 6.5 wait/status/result/summary/events/transcript
 
 已实现：
 
@@ -262,7 +304,7 @@ getSessionFile() ?? getSessionId()
 
 ---
 
-### 6.5 retry/fallback/model
+### 6.6 retry/fallback/model
 
 `agent()` 支持：
 
@@ -284,7 +326,7 @@ agent('...', {
 
 ---
 
-### 6.6 budget/timeout
+### 6.7 budget/timeout
 
 支持：
 
@@ -306,7 +348,7 @@ agent('...', {
 
 ---
 
-### 6.7 worktree
+### 6.8 worktree
 
 支持：
 
@@ -326,7 +368,7 @@ agent('...', { isolation: 'worktree' })
 
 ---
 
-### 6.8 resume/steer
+### 6.9 resume/steer
 
 支持：
 
@@ -339,11 +381,13 @@ workflow_steer
 
 - `workflow_resume` 只是继续 child session，不恢复 JS workflow graph；
 - `workflow_steer` 是 current-process live child best-effort；
+- `workflow_extend` 启动 linked follow-up run，并通过只读 `continuation` global 提供父 run 上下文；
+- `workflow_replace_tail` 先取消 running parent，再启动 linked replacement run；
 - 没有 ack/recovery/supervisor 协议。
 
 ---
 
-### 6.9 prune
+### 6.10 prune
 
 新增：
 
@@ -377,7 +421,7 @@ workflow_prune
 
 ---
 
-### 6.10 best-effort display graph
+### 6.11 best-effort display graph
 
 为 pi-web 提供：
 
@@ -525,6 +569,7 @@ docs/workflow-bg/PARITY.md
 - supervisor/intercom；
 - robust live steer ack/recovery；
 - full child revive parity；
+- 原地修改正在运行的 JS workflow；
 - advanced provider-specific fallback policy；
 - worktree merge-back；
 - full live budget state machine；
