@@ -11,11 +11,8 @@ const workflowTool = createWorkflowTool();
 const guidelines = workflowTool.promptGuidelines?.join('\n') ?? '';
 assertIncludes(guidelines, 'pi-dynamic-workflows-bg` skill before advanced authoring', 'workflow guidance');
 assertIncludes(guidelines, 'pi-dynamic-workflows-bg` skill before deeper diagnostics', 'workflow guidance');
-assertIncludes(workflowTool.description, 'workflow_wait to consume results', 'workflow description');
+assertIncludes(workflowTool.description, 'Core lifecycle: background by default, foreground:true only for inline waits; use workflow_wait to consume results, workflow_status/result to inspect progress and outcomes, and workflow_cancel to stop a running run.', 'workflow description');
 assertIncludes(workflowTool.description, 'workflow_extend starts a linked workflow', 'workflow description');
-assertIncludes(workflowTool.description, 'workflow_resume continues one child session', 'workflow description');
-assertIncludes(workflowTool.description, 'workflow_summary/events/transcript inspect state', 'workflow description');
-assertIncludes(workflowTool.description, 'workflow_steer sends experimental live guidance', 'workflow description');
 assertIncludes(workflowTool.description, 'read the `pi-dynamic-workflows-bg` skill', 'workflow description');
 assertIncludes(guidelines, 'continuation.parent.runId/result/outputPath/snapshot', 'workflow guidance');
 assertIncludes(guidelines, 'not continuation.id/result', 'workflow guidance');
@@ -38,10 +35,5 @@ assertIncludes(extendDescription, 'Parent remains unchanged', 'workflow_extend d
 assertIncludes(extendDescription, 'Use after workflow_result/summary', 'workflow_extend description');
 assertIncludes(extendDescription, 'continuation.parent.runId/result/outputPath/snapshot', 'workflow_extend description');
 
-const replaceDescription = tools.get('workflow_replace_tail')?.description ?? '';
-assertIncludes(replaceDescription, 'Cancel a running parent', 'workflow_replace_tail description');
-assertIncludes(replaceDescription, 'Use only when the current parent direction is wrong', 'workflow_replace_tail description');
-assertIncludes(replaceDescription, 'validated before cancellation', 'workflow_replace_tail description');
-assertIncludes(replaceDescription, 'never modified or resumed', 'workflow_replace_tail description');
 
 console.log(JSON.stringify({ ok: true }, null, 2));

@@ -34,7 +34,7 @@ const pi = {
 extension(pi);
 pi.on_session_start?.();
 
-for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_summary', 'workflow_extend', 'workflow_replace_tail', 'workflow_transcript', 'workflow_events', 'workflow_worktrees', 'workflow_worktree_cleanup', 'workflow_prune', 'workflow_steer', 'workflow_resume', 'workflow_cancel', 'workflow_wait']) {
+for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_extend', 'workflow_cancel', 'workflow_wait']) {
   if (!tools.has(name)) throw new Error(`${name} tool was not registered`);
 }
 for (const name of ['workflow-status', 'workflow-result', 'workflow-summary', 'workflow-extend', 'workflow-replace-tail', 'workflow-transcript', 'workflow-events', 'workflow-worktrees', 'workflow-worktree-cleanup', 'workflow-prune', 'workflow-steer', 'workflow-resume', 'workflow-cancel']) {
@@ -42,7 +42,7 @@ for (const name of ['workflow-status', 'workflow-result', 'workflow-summary', 'w
 }
 if (!renderers.has('background-workflow-result')) throw new Error('message renderer was not registered');
 if (appendedEntries.length !== 0) throw new Error('extension should not use appendEntry for model-visible completion');
-if (!pi.activeTools || JSON.stringify(pi.activeTools) !== JSON.stringify(['workflow', 'workflow_status', 'workflow_result', 'workflow_wait'])) {
+if (!pi.activeTools || JSON.stringify(pi.activeTools) !== JSON.stringify(['workflow', 'workflow_status', 'workflow_result', 'workflow_wait', 'workflow_cancel', 'workflow_extend'])) {
   throw new Error(`unexpected default active workflow tools: ${JSON.stringify(pi.activeTools)}`);
 }
 
@@ -101,14 +101,6 @@ const resultTool = tools.get('workflow_result');
 const resultResult = await resultTool.execute('result-1', { id: runId }, undefined, undefined, {});
 if (!resultResult.content[0].text.includes('extension_smoke')) throw new Error('workflow_result did not include workflow name');
 
-const summaryTool = tools.get('workflow_summary');
-const summaryResult = await summaryTool.execute('summary-1', { id: runId }, undefined, undefined, {});
-if (!summaryResult.content[0].text.includes('Workflow summary') || !summaryResult.content[0].text.includes(runId)) throw new Error('workflow_summary did not include run summary');
-
-const eventsTool = tools.get('workflow_events');
-const eventsResult = await eventsTool.execute('events-1', { id: runId, lines: 20 }, undefined, undefined, {});
-if (!eventsResult.content[0].text.includes('workflow.started')) throw new Error('workflow_events did not include lifecycle events');
-
 const waitTool = tools.get('workflow_wait');
 const waitResult = await waitTool.execute('wait-1', { id: runId, timeoutMs: 1000 }, undefined, undefined, {});
 if (!waitResult.content[0].text.includes('extension_smoke')) throw new Error('workflow_wait did not return workflow result');
@@ -119,12 +111,6 @@ if (waitAllResult.details?.all !== true || waitAllResult.details?.status !== 'id
 const cancelTool = tools.get('workflow_cancel');
 const cancelResult = await cancelTool.execute('cancel-1', { id: runId }, undefined, undefined, {});
 if (!cancelResult.isError || !cancelResult.content[0].text.includes(runId)) throw new Error('workflow_cancel terminal-run diagnostic mismatch');
-
-const pruneTool = tools.get('workflow_prune');
-const pruneResult = await pruneTool.execute('prune-1', { keepLast: 1000 }, undefined, undefined, {});
-if (!pruneResult.content[0].text.includes('Workflow prune dry run') || pruneResult.details?.dryRun !== true) throw new Error('workflow_prune dry-run response mismatch');
-const badPruneResult = await pruneTool.execute('prune-bad', { keepLast: Number.NaN }, undefined, undefined, {});
-if (!badPruneResult.isError || !badPruneResult.content[0].text.includes('keepLast')) throw new Error('workflow_prune invalid input response mismatch');
 if (cancelResult.details?.status !== 'not_running_or_not_found') throw new Error('workflow_cancel terminal-run details mismatch');
 
 console.log(JSON.stringify({ ok: true, runId, sent: { customType: sent.message.customType, triggerTurn: sent.options.triggerTurn }, wait: waitResult.details }, null, 2));
