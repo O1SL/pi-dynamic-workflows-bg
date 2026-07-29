@@ -18,6 +18,7 @@
     "dist/",
     "docs/",
     "extensions/",
+    "skills/",
     "src/",
     "types/",
     "README.md"
@@ -41,6 +42,9 @@
   "pi": {
     "extensions": [
       "extensions/workflow.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "repository": {

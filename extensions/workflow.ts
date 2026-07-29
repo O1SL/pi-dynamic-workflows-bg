@@ -130,7 +130,7 @@ export default function extension(pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "workflow_extend",
     label: "Workflow Extend",
-    description: "Start a linked follow-up workflow using a parent run's partial or final context. The parent is not modified or resumed; the new workflow receives a read-only continuation global.",
+    description: "Start a new, independent workflow from a parent run's partial/final context. Parent remains unchanged. Use after workflow_result/summary shows enough evidence to plan the next step. The child script receives read-only continuation; access parent fields via continuation.parent.runId/result/outputPath/snapshot.",
     parameters: Type.Object({
       parentId: Type.String({ description: "Parent workflow run id or unique prefix." }),
       script: Type.String({ description: "Raw follow-up workflow JavaScript. It receives the read-only `continuation` global." }),
@@ -162,7 +162,7 @@ export default function extension(pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "workflow_replace_tail",
     label: "Workflow Replace Tail",
-    description: "Cancel a running parent workflow, wait for it to settle, then start a linked follow-up workflow from its partial context. This never mutates a running JS VM.",
+    description: "Cancel a running parent, wait for it to settle, then start an independent replacement workflow from its partial context. Use only when the current parent direction is wrong. The replacement script is validated before cancellation, and the running JS VM is never modified or resumed.",
     parameters: Type.Object({
       parentId: Type.String({ description: "Running parent workflow run id or unique prefix." }),
       script: Type.String({ description: "Raw replacement follow-up workflow JavaScript. It receives the read-only `continuation` global." }),
@@ -573,7 +573,7 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     const active = pi.getActiveTools();
-    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_summary", "workflow_extend", "workflow_replace_tail", "workflow_transcript", "workflow_events", "workflow_worktrees", "workflow_worktree_cleanup", "workflow_prune", "workflow_steer", "workflow_resume", "workflow_cancel", "workflow_wait"];
+    const requiredTools = ["workflow", "workflow_status", "workflow_result", "workflow_wait"];
     const next = [...active];
     for (const tool of requiredTools) {
       if (!next.includes(tool)) next.push(tool);

@@ -32,6 +32,7 @@ const pi = {
 };
 
 extension(pi);
+pi.on_session_start?.();
 
 for (const name of ['workflow', 'workflow_status', 'workflow_result', 'workflow_summary', 'workflow_extend', 'workflow_replace_tail', 'workflow_transcript', 'workflow_events', 'workflow_worktrees', 'workflow_worktree_cleanup', 'workflow_prune', 'workflow_steer', 'workflow_resume', 'workflow_cancel', 'workflow_wait']) {
   if (!tools.has(name)) throw new Error(`${name} tool was not registered`);
@@ -41,6 +42,9 @@ for (const name of ['workflow-status', 'workflow-result', 'workflow-summary', 'w
 }
 if (!renderers.has('background-workflow-result')) throw new Error('message renderer was not registered');
 if (appendedEntries.length !== 0) throw new Error('extension should not use appendEntry for model-visible completion');
+if (!pi.activeTools || JSON.stringify(pi.activeTools) !== JSON.stringify(['workflow', 'workflow_status', 'workflow_result', 'workflow_wait'])) {
+  throw new Error(`unexpected default active workflow tools: ${JSON.stringify(pi.activeTools)}`);
+}
 
 const registry = globalThis[registryKey];
 if (!registry?.providers?.has('pi-dynamic-workflows-bg')) throw new Error('background-work provider not registered');
