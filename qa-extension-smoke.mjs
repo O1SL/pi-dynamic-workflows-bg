@@ -2,12 +2,13 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import extension from './dist/extensions/workflow.js';
 
 const registryKey = Symbol.for('pi-subagents.background-work.v1');
 delete globalThis[registryKey];
 
 const tmp = await mkdtemp(join(tmpdir(), 'dwf-bg-ext-qa-'));
+process.env.PI_CODING_AGENT_DIR = tmp;
+const { default: extension } = await import('./dist/extensions/workflow.js');
 const tools = new Map();
 const commands = new Map();
 const renderers = new Map();
@@ -64,6 +65,9 @@ if (active.length !== 1 || active[0].sessionId !== 'session-file-qa.jsonl') thro
 
 // Cancel the real background run quickly; the completion path should still send a model-visible message.
 const runId = result.details.id;
+if (!String(result.details.artifactDir).startsWith(join(tmp, 'background-workflows', 'runs'))) {
+  throw new Error(`extension smoke artifacts escaped temporary agent directory: ${result.details.artifactDir}`);
+}
 const cancelCommand = commands.get('workflow-cancel');
 await cancelCommand.handler(runId, { ui: { notify() {} } });
 

@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "description": "Background-first dynamic workflow orchestration for Pi.",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
     },
     "./workflow": {
       "types": "./types/workflow.d.ts"
@@ -25,7 +25,7 @@
   "scripts": {
     "test": "npm run qa:full",
     "qa:smoke": "npm run build && node qa-smoke.mjs && node qa-extension-smoke.mjs",
-    "qa:full": "npm run build && node qa-smoke.mjs && node qa-tool-budget.mjs && node qa-manager-comprehensive.mjs && node qa-extension-smoke.mjs",
+    "qa:full": "npm run build && node qa-package-entry.mjs && node qa-smoke.mjs && node qa-tool-budget.mjs && node qa-manager-comprehensive.mjs && node qa-extension-smoke.mjs",
     "check": "npm run build",
     "format": "biome format --write .",
     "lint": "biome lint .",

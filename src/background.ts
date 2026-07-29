@@ -454,8 +454,10 @@ export function createBackgroundWorkflowManager(
             update(run);
           },
           onGraphGroupEnd(event) {
-            appendEventSync(run, { type: "workflow.graph.group_ended", id: event.id, status: event.status });
-            updateWorkflowGraphNode(run.snapshot, event.id, { status: event.status });
+            const childFailed = run.snapshot.graph?.nodes.some((node) => node.parentId === event.id && node.status === "error") ?? false;
+            const status = event.status === "done" && childFailed ? "error" : event.status;
+            appendEventSync(run, { type: "workflow.graph.group_ended", id: event.id, status });
+            updateWorkflowGraphNode(run.snapshot, event.id, { status });
             update(run);
           },
           onAgentStart(event) {
@@ -551,11 +553,12 @@ export function createBackgroundWorkflowManager(
               .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.status = event.result === null ? "error" : "done";
+              agent.error = event.error;
               agent.resultPreview = preview(event.result);
               agent.durationMs = agent.startedAtMs ? Date.now() - agent.startedAtMs : undefined;
               updateWorkflowGraphNode(run.snapshot, agent.agentRunId!, { status: agentStatusToGraphStatus(agent.status), usage: { ...(run.snapshot.graph?.nodes.find((node) => node.id === agent.agentRunId)?.usage ?? {}), durationMs: agent.durationMs } });
             }
-            appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", resultPreview: preview(event.result), sessionFile: agent?.sessionFile, worktreePath: agent?.worktreePath });
+            appendEventSync(run, { type: "workflow.agent.ended", label: event.label, phase: event.phase, status: event.result === null ? "error" : "done", error: event.error, resultPreview: preview(event.result), sessionFile: agent?.sessionFile, worktreePath: agent?.worktreePath });
             update(run);
           },
         });
@@ -568,7 +571,7 @@ export function createBackgroundWorkflowManager(
         run.status = "completed";
         run.snapshot.result = result.result;
         run.snapshot.durationMs = result.durationMs;
-        appendEventSync(run, { type: "workflow.completed", id: run.id });
+        appendEventSync(run, { type: "workflow.completed", id: run.id, ...(run.snapshot.errorCount > 0 ? { childErrorCount: run.snapshot.errorCount } : {}) });
       } catch (error) {
         run.status = run.controller.signal.aborted ? "cancelled" : "failed";
         run.error = error instanceof Error ? error.message : String(error);
@@ -586,7 +589,16 @@ export function createBackgroundWorkflowManager(
       } finally {
         run.completedAt = new Date().toISOString();
         update(run);
-        await writeResultArtifacts(run).catch(() => undefined);
+        try {
+          await writeResultArtifacts(run);
+        } catch (error) {
+          const artifactError = error instanceof Error ? error.message : String(error);
+          run.status = "failed";
+          run.error = `Failed to write workflow artifacts: ${artifactError}`;
+          appendEventSync(run, { type: "workflow.artifact_write_failed", id: run.id, error: run.error });
+          update(run);
+          await writeFileAtomic(run.outputPath, formatRunResult(run)).catch(() => undefined);
+        }
         await persist(run).catch(() => undefined);
         queueNotification(run);
       }
@@ -876,8 +888,12 @@ function nonNegativeFiniteNumber(value: unknown, name: string): number {
   return value;
 }
 
+function completionLabel(run: BackgroundWorkflowRun): string {
+  return run.status === "completed" && run.snapshot.hasAgentErrors ? "completed with child errors" : run.status;
+}
+
 export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): string {
-  const base = `${run.id} [${run.status}] ${run.name} (${run.snapshot.doneCount}/${run.snapshot.agentCount} done)`;
+  const base = `${run.id} [${completionLabel(run)}] ${run.name} (${run.snapshot.doneCount}/${run.snapshot.agentCount} done)`;
   if (!verbose) return base;
   const lines = [
     base,
@@ -895,7 +911,7 @@ export function formatRunStatus(run: BackgroundWorkflowRun, verbose: boolean): s
 }
 
 export function formatRunResult(run: BackgroundWorkflowRun): string {
-  const heading = `Background workflow ${run.status}: ${run.name}`;
+  const heading = `Background workflow ${completionLabel(run)}: ${run.name}`;
   const lines = [
     heading,
     "",
@@ -945,7 +961,7 @@ export function formatRunSummary(run: BackgroundWorkflowRun): string {
   return [
     `Workflow summary: ${run.id}`,
     `Name: ${run.name}`,
-    `Status: ${run.status}`,
+    `Status: ${completionLabel(run)}`,
     `Description: ${run.description}`,
     `Started: ${run.startedAt}`,
     `Updated: ${run.updatedAt}`,
@@ -1060,7 +1076,7 @@ export function formatNotification(run: BackgroundWorkflowRun, maxChars = DEFAUL
   if (full.length <= maxChars) return full;
   const omitted = full.length - maxChars;
   return [
-    `Background workflow ${run.status}: ${run.name}`,
+    `Background workflow ${completionLabel(run)}: ${run.name}`,
     "",
     `Run ID: ${run.id}`,
     `Artifacts: ${run.artifactDir}`,
@@ -1077,7 +1093,7 @@ export function formatNotificationBatch(runs: BackgroundWorkflowRun[], maxChars 
   const header = `Background workflows completed (${runs.length}): ${runs.map((run) => run.name).join(", ")}`;
   const blocks = [header, ""];
   for (const run of runs) {
-    const oneLine = `${run.id} [${run.status}] ${run.name} (${run.snapshot.doneCount}/${run.snapshot.agentCount} done)`;
+    const oneLine = `${run.id} [${completionLabel(run)}] ${run.name} (${run.snapshot.doneCount}/${run.snapshot.agentCount} done)`;
     blocks.push(`- ${oneLine}`);
     if (run.error) blocks.push(`  Error: ${run.error}`);
     if (run.result) blocks.push(`  Result: ${JSON.stringify(run.result.result)}`);
@@ -1089,7 +1105,7 @@ export function formatNotificationBatch(runs: BackgroundWorkflowRun[], maxChars 
     header,
     "",
     `Batch notification truncated. ${runs.length} workflow(s) completed.`,
-    ...runs.map((run) => `- ${run.id} [${run.status}] ${run.name} · output: ${run.outputPath}`),
+    ...runs.map((run) => `- ${run.id} [${completionLabel(run)}] ${run.name} · output: ${run.outputPath}`),
   ].join("\n");
 }
 

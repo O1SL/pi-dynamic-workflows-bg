@@ -183,7 +183,8 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
             update();
           },
           onGraphGroupEnd(event) {
-            updateWorkflowGraphNode(snapshot, event.id, { status: event.status });
+            const childFailed = snapshot.graph?.nodes.some((node) => node.parentId === event.id && node.status === "error") ?? false;
+            updateWorkflowGraphNode(snapshot, event.id, { status: event.status === "done" && childFailed ? "error" : event.status });
             update();
           },
           onAgentStart(event) {
@@ -267,6 +268,7 @@ export function createWorkflowTool(options: WorkflowToolOptions = {}): ToolDefin
               .find((item) => item.agentRunId === event.agentRunId);
             if (agent) {
               agent.status = event.result === null ? "error" : "done";
+              agent.error = event.error;
               agent.resultPreview = preview(event.result);
               agent.durationMs = agent.startedAtMs ? Date.now() - agent.startedAtMs : undefined;
               updateWorkflowGraphNode(snapshot, agent.agentRunId!, { status: agentStatusToGraphStatus(agent.status), usage: { ...(snapshot.graph?.nodes.find((node) => node.id === agent.agentRunId)?.usage ?? {}), durationMs: agent.durationMs } });

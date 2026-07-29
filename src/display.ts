@@ -71,6 +71,8 @@ export interface WorkflowSnapshot {
   runningCount: number;
   doneCount: number;
   errorCount: number;
+  /** True when the JS workflow returned normally but one or more child agents failed. */
+  hasAgentErrors?: boolean;
   durationMs?: number;
   result?: unknown;
   graph?: WorkflowGraph;
@@ -110,7 +112,7 @@ export function recomputeWorkflowSnapshot(snapshot: WorkflowSnapshot): WorkflowS
   const runningCount = snapshot.agents.filter((agent) => agent.status === "running").length;
   const doneCount = snapshot.agents.filter((agent) => agent.status === "done").length;
   const errorCount = snapshot.agents.filter((agent) => agent.status === "error").length;
-  return { ...snapshot, agentCount: snapshot.agents.length, runningCount, doneCount, errorCount, graph: recomputeGraph(snapshot.graph) };
+  return { ...snapshot, agentCount: snapshot.agents.length, runningCount, doneCount, errorCount, hasAgentErrors: errorCount > 0, graph: recomputeGraph(snapshot.graph) };
 }
 
 export function ensureWorkflowGraph(snapshot: WorkflowSnapshot, runId = snapshot.name): WorkflowGraph {
@@ -285,12 +287,16 @@ export function renderWorkflowText(
   completed = false,
   options: WorkflowDisplayOptions = {},
 ): string {
-  const header = completed ? "Workflow completed" : "Workflow running";
+  const header = completed
+    ? snapshot.hasAgentErrors
+      ? "Workflow completed with child errors"
+      : "Workflow completed"
+    : "Workflow running";
   return [header, ...renderWorkflowLines(snapshot, options)].join("\n");
 }
 
 function statusLine(snapshot: WorkflowSnapshot, completed: boolean): string {
-  if (completed) return `workflow ✓ ${snapshot.name}: ${snapshot.doneCount}/${snapshot.agentCount}`;
+  if (completed) return `workflow ${snapshot.hasAgentErrors ? "⚠" : "✓"} ${snapshot.name}: ${snapshot.doneCount}/${snapshot.agentCount}${snapshot.hasAgentErrors ? " with child errors" : ""}`;
   if (snapshot.runningCount > 0)
     return `workflow ${snapshot.name}: ${snapshot.runningCount} running, ${snapshot.doneCount}/${snapshot.agentCount} done`;
   return `workflow ${snapshot.name}: ${snapshot.doneCount}/${snapshot.agentCount} done`;

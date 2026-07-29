@@ -75,7 +75,7 @@ export interface WorkflowRunOptions extends WorkflowAgentOptions {
   onLog?: (message: string) => void;
   onPhase?: (title: string) => void;
   onAgentStart?: (event: { agentRunId: string; label: string; phase?: string; prompt: string; parentId?: string; pipelineCell?: { itemIndex: number; stageIndex: number; itemLabel?: string } }) => void;
-  onAgentEnd?: (event: { agentRunId: string; label: string; phase?: string; result: unknown }) => void;
+  onAgentEnd?: (event: { agentRunId: string; label: string; phase?: string; result: unknown; error?: string }) => void;
   onAgentSession?: (event: { agentRunId: string; label: string; phase?: string; sessionFile?: string }) => void;
   onAgentWorktree?: (event: { agentRunId: string; label: string; phase?: string; worktreePath: string }) => void;
   onAgentAttempt?: (event: { agentRunId: string; label: string; phase?: string; model?: string; attempt: number; status: "failed" | "succeeded"; error?: string }) => void;
@@ -245,7 +245,7 @@ export async function runWorkflow<T = unknown>(
       } catch (error) {
         if (options.signal?.aborted) throw error;
         log(`agent ${label} failed: ${error instanceof Error ? error.message : String(error)}`);
-        options.onAgentEnd?.({ agentRunId, label, phase: assignedPhase, result: null });
+        options.onAgentEnd?.({ agentRunId, label, phase: assignedPhase, result: null, error: error instanceof Error ? error.message : String(error) });
         return null;
       }
     });
@@ -364,7 +364,7 @@ export async function runWorkflow<T = unknown>(
   const wrapped = `(async function () {\n"use strict";\n${body}\n})()`;
   const result = await new vm.Script(wrapped, { filename: `${meta.name || "workflow"}.js` }).runInContext(context);
   await Promise.allSettled([...pendingAgentRuns]);
-  assertStructuredCloneable(result, "workflow result");
+  assertJsonSerializable(result, "workflow result");
   return {
     meta,
     result: result as T,
@@ -680,15 +680,28 @@ function createChildSignal(parent: AbortSignal | undefined, timeoutMs: number | 
   return controller.signal;
 }
 
-function assertStructuredCloneable(value: unknown, name: string): void {
-  try {
-    structuredClone(value);
-  } catch (error) {
-    const detail = error instanceof Error ? ` ${error.message}` : "";
-    throw new Error(
-      `${name} must be structured-cloneable; did you forget to await agent(), parallel(), or pipeline()?${detail}`,
-    );
+function assertJsonSerializable(value: unknown, name: string, path = name, seen = new Set<object>()): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return;
+    throw new Error(`${path} must contain only finite JSON numbers`);
   }
+  if (typeof value === "undefined") throw new Error(`${path} must not be undefined; return null instead`);
+  if (typeof value === "bigint") throw new Error(`${path} must not contain BigInt; convert it to string or number`);
+  if (typeof value === "function" || typeof value === "symbol") throw new Error(`${path} must be JSON serializable`);
+  if (typeof value !== "object") throw new Error(`${path} must be JSON serializable`);
+  if (seen.has(value)) throw new Error(`${path} must not contain circular references`);
+  seen.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertJsonSerializable(item, name, `${path}[${index}]`, seen));
+  } else {
+    if (Object.prototype.toString.call(value) !== "[object Object]") {
+      const prototype = Object.getPrototypeOf(value);
+      throw new Error(`${path} must use plain JSON objects; ${prototype?.constructor?.name ?? "custom"} is not supported`);
+    }
+    for (const [key, item] of Object.entries(value)) assertJsonSerializable(item, name, `${path}.${key}`, seen);
+  }
+  seen.delete(value);
 }
 
 function defaultAgentLabel(phase: string | undefined, index: number): string {

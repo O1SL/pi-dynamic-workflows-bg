@@ -93,7 +93,7 @@ Artifacts are written to:
 ├── status.json
 ├── events.jsonl
 ├── output.md
-├── result.json
+├── result.json       # guaranteed for successful runs; see status.json/output.md for other terminal states
 └── sessions/
 ```
 
@@ -167,7 +167,7 @@ See [`docs/workflow-bg/README_CN.md`](docs/workflow-bg/README_CN.md) for a compl
 - Prefer `workflow_wait` when the current model turn must block until a specific workflow finishes. It is native to this extension and does not depend on `pi-subagents`.
 - The extension registers a best-effort compatible `pi-subagents.background-work.v1` provider. This works when both extensions share the same Pi extension realm (verified with explicit `-e` loading), but global package auto-loading can isolate realms enough that `subagent_wait` does not see workflow provider items. Completion messages remain model-visible either way.
 - Background progress is persisted to artifact files. Live inline tool streaming is only available in `foreground:true` mode.
-- `agent()` retries retryable provider/model failures once by default. Use `agent(..., { retry, retryDelayMs, fallbackModels })` to tune same-model retries and fallback model attempts.
+- `agent()` retries retryable provider/model failures once by default. Use `agent(..., { retry, retryDelayMs, fallbackModels })` to tune same-model retries and fallback model attempts. Child failures return `null` by default so workflows can deliberately continue; completed runs with child failures are surfaced as `completed with child errors` in status/result/summary output.
 - Completed/failed/cancelled/interrupted runs are restored from disk, and status/result lookups can lazy-load matching run artifacts written by another manager instance. Running records owned by a live process are left untouched; if Pi exits while a run is active, that run is reconciled as `interrupted`; the JavaScript workflow VM itself is not resumed.
 - This fork intentionally keeps the original `workflow` tool name so existing prompts keep working, but changes the default mode to background.
 
@@ -184,7 +184,7 @@ npm run qa:smoke
 1. `qa-smoke.mjs` — mock-agent background execution, notification callback, and artifact checks.
 2. `qa-extension-smoke.mjs` — extension registration, model-visible `sendMessage(... triggerTurn:true)` completion, and same-realm `pi-subagents.background-work.v1` provider checks.
 
-`qa:full` additionally runs `qa-tool-budget.mjs` and `qa-manager-comprehensive.mjs`, covering success, failure, no-agent validation, cancellation, concurrent id collision prevention, provider-active visibility, session-scoped wait, wait timeout, retry/fallback, budgets, worktrees, lazy restore, malformed/restore-disabled restore paths, prune active-run protection and older-than filtering, trusted artifact paths, atomic writes, deterministic runtime hardening, best-effort graph serialization/nesting/terminal states, and artifact outputs.
+`qa:full` additionally runs `qa-package-entry.mjs`, `qa-tool-budget.mjs`, and `qa-manager-comprehensive.mjs`, covering package root imports, success, failure, JSON-result contract validation, no-agent validation, cancellation, child-error aggregation, concurrent id collision prevention, provider-active visibility, session-scoped wait, wait timeout, retry/fallback, budgets, worktrees, lazy restore, malformed/restore-disabled restore paths, prune active-run protection and older-than filtering, trusted artifact paths, atomic writes, deterministic runtime hardening, best-effort graph serialization/nesting/terminal states, and artifact outputs.
 
 ## License
 

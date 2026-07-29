@@ -253,7 +253,7 @@ continuation.parent.snapshot
 ├── status.json
 ├── events.jsonl
 ├── output.md
-├── result.json
+├── result.json       # 成功 run 保证存在；其他终态以 status.json/output.md 为准
 └── sessions/
 ```
 
@@ -262,7 +262,7 @@ continuation.parent.snapshot
 - `status.json`：最新 run 状态和 snapshot；
 - `events.jsonl`：生命周期事件；
 - `output.md`：人类可读输出；
-- `result.json`：workflow return value；
+- `result.json`：成功 run 的 workflow return value；失败/取消/中断 run 以 `status.json` 和 `output.md` 为准；
 - `sessions/`：child agent session transcript。
 
 关键 JSON/Markdown artifacts 使用 temp-file + atomic rename；失败时 best-effort 清理 tmp。
@@ -767,6 +767,7 @@ pi update git:github.com/O1SL/pi-dynamic-workflows-bg
 - 好跑：默认后台，支持 foreground 兼容；
 - 好查：status/result/summary/events/transcript；
 - 好恢复：artifacts/recovery/lazy restore/interrupted；
+- 契约清晰：workflow return value 必须为严格 JSON serializable；child 出错但 JS workflow 继续时会明确标记为 `completed with child errors`；
 - 好扩展：retry/fallback/budget/worktree/prune/graph；
 - 好维护：QA/CI/pack/docs 同步；
 - 边界清楚：不复制 `pi-subagents`，只补 workflow runtime 该有的能力。

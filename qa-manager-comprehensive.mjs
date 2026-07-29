@@ -220,6 +220,29 @@ const failOutput = await readFile(failed.outputPath, 'utf8');
 assert(failOutput.includes('Background workflow failed: failure_case'), 'failure output heading missing');
 assert(failOutput.includes('BOOM_EXPECTED'), 'failure output error missing');
 
+const childErrorScript = `export const meta = { name: 'child_error_case', description: 'child error case' }
+const results = await parallel([
+  () => agent('good', { label: 'good child' }),
+  () => agent('bad', { label: 'bad child' }),
+])
+return { results }
+`;
+const childErrorRun = await manager.start({
+  script: childErrorScript,
+  sessionId: 'session-child-error',
+  agent: {
+    async run(prompt) {
+      if (prompt === 'bad') throw new Error('CHILD_EXPECTED_ERROR');
+      return 'good-result';
+    },
+  },
+});
+await manager.waitForRun(childErrorRun.id, 2000);
+assert(childErrorRun.status === 'completed' && childErrorRun.snapshot.hasAgentErrors === true, 'child error should preserve completed-with-errors state');
+assert(childErrorRun.snapshot.agents.some((agent) => agent.status === 'error' && agent.error?.includes('CHILD_EXPECTED_ERROR')), 'child error details missing from snapshot');
+assert(childErrorRun.snapshot.graph?.nodes.find((node) => node.kind === 'parallel')?.status === 'error', 'parallel group should reflect child failure');
+assert(manager.formatResult(childErrorRun.id).includes('completed with child errors'), 'result output should disclose child errors');
+
 // 3. No-agent workflow is rejected as failed.
 const noAgentScript = `export const meta = { name: 'no_agent_case', description: 'no agent case' }
 return { ok: true }
@@ -228,6 +251,29 @@ const noAgent = await manager.start({ script: noAgentScript, sessionId: 'session
 await manager.waitForIdle('session-c', 2000);
 assert(noAgent.status === 'failed', `no-agent status ${noAgent.status}`);
 assert(String(noAgent.error).includes('must call agent() at least once'), `no-agent error mismatch: ${noAgent.error}`);
+
+for (const [name, expression, expected] of [
+  ['bigint', '1n', 'BigInt'],
+  ['undefined', 'undefined', 'must not be undefined'],
+  ['map', 'new Map([["x", 1]])', 'plain JSON objects'],
+  ['regexp', '/json-contract/', 'plain JSON objects'],
+] ) {
+  const invalidResultRun = await manager.start({
+    script: `export const meta = { name: 'json_${name}_case', description: 'JSON contract ${name}' }\nawait agent('ok', { label: 'json child' })\nreturn ${expression}\n`,
+    sessionId: `session-json-${name}`,
+    agent: { async run() { return 'ok'; } },
+  });
+  await manager.waitForRun(invalidResultRun.id, 2000);
+  assert(invalidResultRun.status === 'failed' && String(invalidResultRun.error).includes(expected), `JSON ${name} contract mismatch: ${invalidResultRun.error}`);
+}
+
+const circularResultRun = await manager.start({
+  script: `export const meta = { name: 'json_circular_case', description: 'JSON contract circular' }\nawait agent('ok', { label: 'json child' })\nconst value = {}; value.self = value; return value\n`,
+  sessionId: 'session-json-circular',
+  agent: { async run() { return 'ok'; } },
+});
+await manager.waitForRun(circularResultRun.id, 2000);
+assert(circularResultRun.status === 'failed' && String(circularResultRun.error).includes('circular'), `JSON circular contract mismatch: ${circularResultRun.error}`);
 
 const nondeterminismAliasScript = `export const meta = { name: 'nondeterminism_alias_case', description: 'nondeterminism alias case' }
 const random = Math.random
